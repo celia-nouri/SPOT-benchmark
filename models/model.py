@@ -1101,18 +1101,23 @@ def get_model(args):
     return model
 
 
-def get_device():
-    device = torch.device('cpu')
+def get_device(rank=None):
+    if rank is not None and torch.cuda.is_available():
+        device = torch.device(f"cuda:{rank}")
+        torch.cuda.set_device(device)
+        print(f"Using CUDA device {rank} for distributed training")
+        return device
+
     if torch.backends.mps.is_available():
-        device = torch.device('mps')
         print("Using MPS")
-        return device
+        return torch.device('mps')
+
     if torch.cuda.is_available():
-        device = torch.device('cuda')
         print("Using CUDA")
-        return device
+        return torch.device('cuda')
+
     print("Using CPU")
-    return device
+    return torch.device('cpu')
 
 def log_memory_usage():
     allocated_memory = torch.cuda.memory_allocated() / (1024 ** 3)

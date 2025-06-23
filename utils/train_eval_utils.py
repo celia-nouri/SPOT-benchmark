@@ -1,6 +1,8 @@
 import torch
+import pandas as pd 
 import os
 import torch.nn as nn
+import torch.nn.functional as F
 from collections import Counter
 from transformers import AutoTokenizer, LongformerTokenizer
 from models.model import all_model_names
@@ -10,10 +12,13 @@ from datetime import datetime
 from torch.cuda.amp import autocast, GradScaler
 from utils.construct_graph import get_graph, get_hetero_graph
 import json
+from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_score, recall_score
+import numpy as np
 
 
 tokenizerRobertaHS = AutoTokenizer.from_pretrained("camembert-base")
 
+'''
 def precision_score(true_labels, predicted_labels):
     true_positive = 0
     false_positive = 0
@@ -55,12 +60,14 @@ def f1_score(true_labels, predicted_labels):
         return 0.0  # Avoid division by zero
     f1 = 2 * (precision * recall) / (precision + recall)
     return f1
+'''
 
 def get_criterion(device, balanced=False, class_counts=[]):
     if not balanced:
-        class_counts = torch.tensor(class_counts)  # /!\ this is set to CAD class distribution: about 80%, 20%
+        class_counts = torch.tensor(class_counts) 
         class_weights = 1.0 / class_counts.float()
         class_weights = class_weights / class_weights.sum()
+        class_weights = torch.tensor([0.3, 0.7]) # going for less extreme class weights.
         class_weights = class_weights.to(device)
         print('class weights ', class_weights, ' class 0 should have lower weight since it has more samples')
         
@@ -134,41 +141,68 @@ def get_reactions_texts(conv_array, index):
     return reaction_txts
 
 # Define validation function
-def evaluate_model(model, loader, model_name, device, output_file=""):
+def evaluate_model(model, loader, model_name, device, output_file="", tune_threshold=True, best_threshold=0.5):
     model.eval()
-    running_loss = 0.0
-    running_corrects = 0
-    true_labels = []
-    predicted_labels = []
+    thresholds = np.arange(0.1, 1.0, 0.1) if tune_threshold else [best_threshold]
+    best_f1 = 0.0
+    selected_threshold = best_threshold
 
     with torch.no_grad():
         with open(output_file, 'w') if output_file else None as outfile:
+            for t in thresholds:
+                running_loss = 0.0
+                running_corrects = 0
+                true_labels = []
+                predicted_labels = []
+                for batch in loader:
+                        batch = {k: v.to(device) for k, v in batch.items()}
+                        outputs = run_model_pred(model, batch, model_name)
+                        labels = batch["labels"]
+                        loss = outputs.loss
+                        running_loss, running_corrects, true_labels, predicted_labels = update_running_metrics(
+                            loss, outputs, labels, running_loss, running_corrects, true_labels, predicted_labels, threshold=t
+                            )
+                f1 = f1_score(true_labels, predicted_labels, zero_division=0)
+                if tune_threshold and f1 > best_f1:
+                    best_f1 = f1
+                    selected_threshold = t
+                    print(f"Best threshold: {selected_threshold}, F1: {best_f1}")
+                elif not tune_threshold:
+                    best_f1 = f1  
+                
+
+        with open(output_file, 'w') if output_file else None as outfile:
+            running_loss = 0.0
+            running_corrects = 0
+            true_labels = []
+            predicted_labels = []
             for batch in loader:
-                batch = {k: v.to(device) for k, v in batch.items()}
-                outputs = run_model_pred(model, batch, model_name)
-                labels = batch["labels"]
-                loss = outputs.loss
-                running_loss, running_corrects, true_labels, predicted_labels = update_running_metrics(
-                    loss, outputs, labels, running_loss, running_corrects, true_labels, predicted_labels
-                    )   
-                if outfile:
-                    preds = torch.argmax(outputs.logits, dim=1)
-                    my_output = {'pred_labels' : preds.detach().cpu().numpy().tolist(), 'y': labels.detach().cpu().numpy().tolist(), 'y_pred': outputs.logits.detach().cpu().numpy().tolist()}
-                    if model_name == "text-class":
-                        text_indices =  batch["index"].detach().cpu().numpy().tolist()
-                        my_output['index'] = text_indices
-                    json.dump(my_output, outfile)
-                    outfile.write('\n')
-            
+                    batch = {k: v.to(device) for k, v in batch.items()}
+                    outputs = run_model_pred(model, batch, model_name)
+                    labels = batch["labels"]
+                    loss = outputs.loss
+                    running_loss, running_corrects, true_labels, predicted_labels = update_running_metrics(
+                        loss, outputs, labels, running_loss, running_corrects, true_labels, predicted_labels, threshold=best_threshold
+                        )
+            if outfile:
+                preds = torch.argmax(outputs.logits, dim=1)
+                my_output = {'pred_labels' : preds.detach().cpu().numpy().tolist(), 'y': labels.detach().cpu().numpy().tolist(), 'y_pred': outputs.logits.detach().cpu().numpy().tolist()}
+                if model_name == "text-class":
+                    text_indices =  batch["index"].detach().cpu().numpy().tolist()
+                    my_output['index'] = text_indices
+                json.dump(my_output, outfile)
+                outfile.write('\n')
+                    
                                         
     # Calculate average loss
-    avg_loss = running_loss / (len(loader))
-    accuracy = float(running_corrects) / (len(loader))
-    precision = precision_score(true_labels, predicted_labels)
-    recall = recall_score(true_labels, predicted_labels)
-    f1 = f1_score(true_labels, predicted_labels)
+    num_samples = len(true_labels)
+    avg_loss = running_loss / num_samples
+    accuracy = float(running_corrects) / num_samples
+    precision = precision_score(true_labels, predicted_labels, zero_division=0)
+    recall = recall_score(true_labels, predicted_labels, zero_division=0)
+    f1 = f1_score(true_labels, predicted_labels, zero_division=0)
 
-    return avg_loss, accuracy, f1, precision, recall
+    return avg_loss, accuracy, f1, precision, recall, selected_threshold
 
 def run_model_pred(model, batch, model_name):
     if model_name == "text-class":
@@ -180,12 +214,14 @@ def run_model_pred(model, batch, model_name):
     return outputs
 
 
-def update_running_metrics(loss, outputs, labels, running_loss, running_corrects, true_labels, predicted_labels):
+def update_running_metrics(loss, outputs, labels, running_loss, running_corrects, true_labels, predicted_labels, threshold=0.5):
     # Detach loss and add to running loss
     running_loss += loss.item()
 
     # Get predicted class (argmax over logits)
-    preds = torch.argmax(outputs.logits, dim=1)
+    #preds = torch.argmax(outputs.logits, dim=1)
+    probs = torch.softmax(outputs.logits, dim=1)
+    preds = (probs[:, 1] > threshold).long()
 
     # Count correct predictions
     running_corrects += torch.sum(preds == labels).item()
@@ -197,13 +233,16 @@ def update_running_metrics(loss, outputs, labels, running_loss, running_corrects
     return running_loss, running_corrects, true_labels, predicted_labels
 
 
-def train(args, model, pretrained_model, train_loader, val_loader, test_loader, criterion, optimizer, device):
-    print("Training set size: ", len(train_loader))
-    print("Validation set size: ", len(val_loader))
-    print("Test set size: ", len(test_loader))
+def train(args, model, pretrained_model, train_loader, val_loader, test_loader, criterion, optimizer, device, rank=0):
     num_epochs, model_name, validation, size = args.epochs, args.model_name, args.validation, args.size
-    print("Train: epochs=", num_epochs, ", dataset_name=pointdarret", ", model=", model_name, "pretrained_model=", pretrained_model)
-    #model.to(device)
+    distributed = isinstance(train_loader.sampler, torch.utils.data.distributed.DistributedSampler)
+
+    if rank == 0:
+        print("Training set size: ", len(train_loader))
+        print("Validation set size: ", len(val_loader))
+        print("Test set size: ", len(test_loader))
+        print("Train: epochs=", num_epochs, ", dataset_name=pointdarret", ", model=", model_name, "pretrained_model=", pretrained_model)
+
     best_val_f1 = float('-inf')
     best_model = model 
     # Patience is the maximum number of epoch with decaying validation scores we will wait for, before early stopping the training
@@ -213,18 +252,25 @@ def train(args, model, pretrained_model, train_loader, val_loader, test_loader, 
     # Generate a unique model name string to save the model at
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     model_check_path = f"models/checkpoints/{timestamp}_{pretrained_model}_{size}.pt"
-    os.makedirs(os.path.dirname(model_check_path), exist_ok=True)
-    print(f"Saving model to ", model_check_path)
+
+    if rank == 0:
+        os.makedirs(os.path.dirname(model_check_path), exist_ok=True)
+        print(f"Saving model to ", model_check_path)
+
+    best_threshold = 0.5
 
     # Training loop
     for epoch in range(num_epochs):
+        if distributed:
+            train_loader.sampler.set_epoch(epoch)  # required for shuffling in DDP
+
         running_loss = float(0)
         running_corrects = 0
         true_labels = []
         predicted_labels = []
         model.train()
         progress_bar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{num_epochs}")
-            #torch.cuda.memory._record_memory_history()
+
 
         for batch in progress_bar:
             with autocast():
@@ -234,7 +280,6 @@ def train(args, model, pretrained_model, train_loader, val_loader, test_loader, 
                 labels = batch["labels"]
                 logits = outputs.logits
                 loss = criterion(logits, labels) # use custom loss function
-                print(f"TRAIN LOOP: labels {labels}, logits {logits}, loss {loss}")
 
                 # Backpropagate
                 loss.backward()
@@ -247,33 +292,46 @@ def train(args, model, pretrained_model, train_loader, val_loader, test_loader, 
                     torch.cuda.empty_cache()
 
                 running_loss, running_corrects, true_labels, predicted_labels = update_running_metrics(
-                    loss, outputs, labels, running_loss, running_corrects, true_labels, predicted_labels
+                    loss, outputs, labels, running_loss, running_corrects, true_labels, predicted_labels, threshold=best_threshold
                     )
-                print(f"running_loss {running_corrects}, running_corrects {running_corrects}, true_labels {true_labels}, predicted_labels {predicted_labels}")
                 progress_bar.set_postfix(loss=loss.item())
-        avg_loss = running_loss/ (len(train_loader))
-        epoch_accuracy = float(running_corrects) / (len(train_loader))
-        epoch_precision = precision_score(true_labels, predicted_labels)
-        epoch_recall = recall_score(true_labels, predicted_labels)
-        epoch_f1 = f1_score(true_labels, predicted_labels)
 
-        # Log metrics to wandb
-        wandb.log({
-            "epoch": epoch + 1,
-            "train_loss": avg_loss,
-            "train_accuracy": epoch_accuracy,
-            "train_precision": epoch_precision,
-            "train_recall": epoch_recall,
-            "train_f1": epoch_f1
-        })
+        if rank == 0:
+            print("Unique predicted labels:", set(predicted_labels))
+            print("True label distribution:", pd.Series(true_labels).value_counts())
+            print("Predicted label distribution:", pd.Series(predicted_labels).value_counts())
+            print("True label:", true_labels)
+            print("Predicted label:", predicted_labels)
+
+        num_samples = len(true_labels)
+        avg_loss = running_loss/ num_samples
+        epoch_accuracy = float(running_corrects) / num_samples
+        epoch_precision = precision_score(true_labels, predicted_labels, zero_division=0)
+        epoch_recall = recall_score(true_labels, predicted_labels, zero_division=0)
+        epoch_f1 = f1_score(true_labels, predicted_labels, zero_division=0)
+
+        if rank == 0:
+            print(classification_report(true_labels, predicted_labels, digits=4))
+            print(confusion_matrix(true_labels, predicted_labels))
+            
+
+            # Log metrics to wandb
+            wandb.log({
+                "epoch": epoch + 1,
+                "train_loss": avg_loss,
+                "train_accuracy": epoch_accuracy,
+                "train_precision": epoch_precision,
+                "train_recall": epoch_recall,
+                "train_f1": epoch_f1
+            })
         
         print(f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {avg_loss:.4f}, "
             f"Train Accuracy: {epoch_accuracy:.4f}, Train Precision: {epoch_precision:.4f}, "
             f"Train Recall: {epoch_recall:.4f}, Train F1 Score: {epoch_f1:.4f}")
 
         # If validation, compute and report the main metrics on the validation set
-        if validation:
-            avg_val_loss, val_accuracy, val_f1, val_precision, val_recall = evaluate_model(model, val_loader, model_name, device, f"{model_name}_{size}_{epoch}_val_outputs.tsv")
+        if validation and rank == 0:
+            avg_val_loss, val_accuracy, val_f1, val_precision, val_recall, val_best_threshold = evaluate_model(model, val_loader, model_name, device, f"{model_name}_{size}_{epoch}_val_outputs.tsv")
             wandb.log({
                 "epoch": epoch + 1,
                 "val_loss": avg_val_loss,
@@ -289,9 +347,10 @@ def train(args, model, pretrained_model, train_loader, val_loader, test_loader, 
             
             # Update best validation f1 score, best model and save checkpoint
             if val_f1 > best_val_f1:
-                print("Replacing best validation F1 score from ", best_val_f1 , " to ", val_f1)
+                print("Replacing best validation F1 score from ", best_val_f1 , " to ", val_f1, " best threshold from ", best_threshold, " to ", val_best_threshold)
                 best_val_f1 = val_f1
                 best_model = model
+                best_threshold = val_best_threshold
                 trigger_times = 0
                 torch.save(model.state_dict(), model_check_path)
             # Early stopping logic 
@@ -300,22 +359,25 @@ def train(args, model, pretrained_model, train_loader, val_loader, test_loader, 
                 if trigger_times > patience:
                     print('Early stopping!')
                     break
-    if not validation:
+    if not validation and rank == 0:
         torch.save(model.state_dict(), model_check_path)
 
     # Finally, evaluate on the test set and report all metrics
-    print("Running evaluation ...")
-    test_loss, test_accuracy, test_f1, test_precision, test_recall = evaluate_model(best_model, test_loader, model_name, device, f"{model_name}_{size}_test_outputs.tsv")
-    wandb.log({
-        "test_loss": test_loss,
-        "test_accuracy": test_accuracy,
-        "test_precision": test_precision,
-        "test_recall": test_recall,
-        "test_f1": test_f1
-    })
-    print(f"Test Loss: {test_loss:.4f}, "
-        f"Test Accuracy: {test_accuracy:.4f}, Test Precision: {test_precision:.4f}, "
-        f"Test Recall: {test_recall:.4f}, Test F1 Score: {test_f1:.4f}")
+    if rank == 0:
+        print("Running evaluation ...")
+        test_loss, test_accuracy, test_f1, test_precision, test_recall, selected_threshold = evaluate_model(best_model, test_loader, model_name, device, f"{model_name}_{size}_test_outputs.tsv", best_threshold=best_threshold)
+        assert selected_threshold == best_threshold
+
+        wandb.log({
+            "test_loss": test_loss,
+            "test_accuracy": test_accuracy,
+            "test_precision": test_precision,
+            "test_recall": test_recall,
+            "test_f1": test_f1
+        })
+        print(f"Test Loss: {test_loss:.4f}, "
+            f"Test Accuracy: {test_accuracy:.4f}, Test Precision: {test_precision:.4f}, "
+            f"Test Recall: {test_recall:.4f}, Test F1 Score: {test_f1:.4f}, Threshold: {best_threshold:.4f}")
 
     # Finish the run
     wandb.finish()

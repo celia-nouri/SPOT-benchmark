@@ -132,7 +132,7 @@ def parse_args(parser):
     # Data args
     parser.add_argument("--data_path", type=str, default="data/clean_annotated_comments.csv")
     parser.add_argument("--output_dir", type=str, default="./camembertv2_results")
-    parser.add_argument('--size', type=str, default='medium', help='the size of the dataset, can take one of the following values: ["small", "medium", "large", "small-1000", "cad"]')
+    parser.add_argument('--size', type=str, default='large', help='the size of the dataset, can take one of the following values: ["small", "medium", "large", "small-1000", "cad"]')
     parser.add_argument('--validation', type=bool, default=True, help='rather or not to use a validation set for model tuning')
     
     # Model args

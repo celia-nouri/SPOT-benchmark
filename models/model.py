@@ -19,7 +19,8 @@ all_base_pretrained_models = [
     "allenai/longformer-base-4096",  # Longformer (English)
     "answerdotai/ModernBERT-base",  # Modern-BERT (English)
     "answerdotai/ModernBERT-large", # Modern-BERT (English)
-    "almanach/camembertv2-base" # CamemBERT v2 (French)
+    "almanach/camembertv2-base", # CamemBERT v2 (French)
+    "almanach/camembert-base" # CamemBERT v1 (French)
 ]
 
 # DistilBERT Classifier model 

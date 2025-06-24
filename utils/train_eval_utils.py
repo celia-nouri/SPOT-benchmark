@@ -19,49 +19,6 @@ import numpy as np
 
 tokenizerRobertaHS = AutoTokenizer.from_pretrained("camembert-base")
 
-'''
-def precision_score(true_labels, predicted_labels):
-    true_positive = 0
-    false_positive = 0
-
-    for true_label, predicted_label in zip(true_labels, predicted_labels):
-        if predicted_label == 1:
-            if true_label == predicted_label:
-                true_positive += 1
-            else:
-                false_positive += 1
-    if true_positive + false_positive == 0:
-        return 0.0  # Avoid division by zero
-    precision = true_positive / (true_positive + false_positive)
-    return precision
-
-def recall_score(true_labels, predicted_labels):
-    true_positive = 0
-    false_negative = 0
-
-    for true_label, predicted_label in zip(true_labels, predicted_labels):
-        if true_label == 1:
-            if true_label == predicted_label:
-                true_positive += 1
-            else:
-                false_negative += 1
-
-
-    if true_positive + false_negative == 0:
-        return 0.0  # Avoid division by zero
-
-    recall = true_positive / (true_positive + false_negative)
-    return recall
-
-def f1_score(true_labels, predicted_labels):
-    precision = precision_score(true_labels, predicted_labels)
-    recall = recall_score(true_labels, predicted_labels)
-
-    if precision + recall == 0:
-        return 0.0  # Avoid division by zero
-    f1 = 2 * (precision * recall) / (precision + recall)
-    return f1
-'''
 
 def get_criterion(device, balanced=False, class_counts=[]):
     if not balanced:

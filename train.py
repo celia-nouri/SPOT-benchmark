@@ -137,7 +137,7 @@ def parse_args(parser):
     
     # Model args
     parser.add_argument("--model-name", type=str, default="text-class", help='the model to use, can take one of the following values: ' + models_string)
-    parser.add_argument('--pretrained-model-name', type=str, default="almanach/camembert-base", help='name for pretrained text model to use to generate text embeddings, can take one of the following values: ' + pretrained_model_string)
+    parser.add_argument('--pretrained-model-name', type=str, default="almanach/camembertv2-base", help='name for pretrained text model to use to generate text embeddings, can take one of the following values: ' + pretrained_model_string)
     parser.add_argument("--attention-probs-dropout-prob", type=float, metavar="D", default=0.3, help="dropout probability for attention weights")
     parser.add_argument("--hidden-dropout-prob", type=float, metavar="D", default=0.3, help="dropout probability after hidden layer")
     

@@ -25,7 +25,7 @@ def get_criterion(device, balanced=False, class_counts=[]):
         class_counts = torch.tensor(class_counts) 
         class_weights = 1.0 / class_counts.float()
         class_weights = class_weights / class_weights.sum()
-        #class_weights = torch.tensor([0.3, 0.]) # going for less extreme class weights.
+        class_weights = torch.tensor([0.3, 0.7]) # going for less extreme class weights.
         class_weights = class_weights.to(device)
         print('class weights ', class_weights, ' class 0 should have lower weight since it has more samples')
         

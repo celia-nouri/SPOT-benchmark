@@ -9,8 +9,13 @@ from utils.construct_graph import get_graph, get_hetero_graph
 
 
 
-all_model_names = ["simple-graph", "distil-class", "text-class", "roberta-class", "bert-class", "bert-concat", "bertwithneighconcat", "bert-ctxemb", "ctxembed", "fb-roberta-hate", "img-text-transformer", "text-graph-transformer", "multimodal-transformer", "gat-model", "gat-test", "hetero-graph", "longform-class", "xlmr-class", "modernbert-class", "reac-class"]
-#var tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased', truncation=True, do_lower_case=True);
+all_model_names = [
+    "text_only", # Text classifier over the comment text
+    "post_text_concat", # Text classifier over the comment text [SEP] post title
+    "post_text_embed" # Generates embeddings for the comment text and post title, combine them with a FC layer, then classify
+    ]
+
+    
 all_base_pretrained_models = [
     "bert-base-uncased",        # BERT (English, uncased)
     "bert-base-cased",          # BERT (English, cased)
@@ -356,10 +361,76 @@ class ContextEmbed(nn.Module):
         #output_representation = encoder_outputs.last_hidden_state[:, 0, :]  # [CLS] token
         out = self.text_model.classifier(combined_embeddings)
         return out
+
+
+class PostTextEmb(nn.Module):
+    def __init__(self, pretrained_model_name='camembert-base', num_classes=2,
+                 hidden_dropout_prob=0.3, attention_probs_dropout_prob=0.3):
+        super().__init__()
+        self.device = get_device()
+        self.model_name = pretrained_model_name
+
+        # Load config with specified dropout values
+        self.config = AutoConfig.from_pretrained(
+            pretrained_model_name,
+            num_labels=num_classes,
+            hidden_dropout_prob=hidden_dropout_prob,
+            attention_probs_dropout_prob=attention_probs_dropout_prob
+        )
+
+        # Load full model to get both encoder and classifier
+        full_model = AutoModelForSequenceClassification.from_pretrained(
+            pretrained_model_name,
+            config=self.config
+        ).to(self.device)
+
+        # Extract encoder and classifier head
+        self.encoder = full_model.base_model  # works for BERT, RoBERTa, CamemBERT, etc.
+        self.classifier = full_model.classifier  # reuse classification head for fair comparison
+
+        # Intermediate reduction layer: concatenated [CLS_text; CLS_title] → 768
+        self.reduce_fc = nn.Linear(1536, 768).to(self.device)
+
+    def forward(self, batch):
+        """
+        batch must contain:
+            - text_input_ids
+            - text_attention_mask
+            - title_input_ids
+            - title_attention_mask
+        """
+        text_input_ids = batch["text_input_ids"].to(self.device)
+        text_attention_mask = batch["text_attention_mask"].to(self.device)
+        title_input_ids = batch["title_input_ids"].to(self.device)
+        title_attention_mask = batch["title_attention_mask"].to(self.device)
+
+        # Encode both text and title independently
+        text_outputs = self.encoder(
+            input_ids=text_input_ids,
+            attention_mask=text_attention_mask
+        )
+        title_outputs = self.encoder(
+            input_ids=title_input_ids,
+            attention_mask=title_attention_mask
+        )
+
+        # Extract [CLS] token embeddings
+        text_cls = text_outputs.last_hidden_state[:, 0, :]   # (B, 768)
+        title_cls = title_outputs.last_hidden_state[:, 0, :] # (B, 768)
+
+        # Concatenate and reduce
+        combined = torch.cat([text_cls, title_cls], dim=1)   # (B, 1536)
+        reduced = self.reduce_fc(combined)                   # (B, 768)
+
+        # Final classification (reusing pretrained classifier head)
+        logits = self.classifier(reduced)                    # (B, num_classes)
+
+        return logits
+
  
-class BERTContextEmb(nn.Module):
+class BERTContextEmbOld(nn.Module):
     def __init__(self, pretrained_model_name='bert-base-uncased', num_classes=2, hidden_dropout_prob=0.3, attention_probs_dropout_prob=0.3, max_length=512, trim="affordance"):
-        super(BERTContextEmb, self).__init__()
+        super(BERTContextEmbOld, self).__init__()
         device = get_device()
         self.trim = trim
         #self.fc_context = torch.nn.Linear(19200, 768).to(device)
@@ -1047,7 +1118,7 @@ def get_model(args):
     # Instantiate your model
     model = ""
 
-    if model_name == "text-class":
+    if model_name == "text_only" or model_name == "post_text_concat":
         custom_config = AutoConfig.from_pretrained(
             pretrained_model_name,
             num_labels=2,                    
@@ -1058,6 +1129,15 @@ def get_model(args):
             pretrained_model_name,
             config=custom_config
         )
+    elif model_name == "post_text_embed":
+        model = PostTextEmb(
+            pretrained_model_name=pretrained_model_name,  
+            num_classes=2,
+            hidden_dropout_prob=args.hidden_dropout_prob, 
+            attention_probs_dropout_prob=args.attention_probs_dropout_prob
+        )
+
+
     '''
     elif model_name == "simple-graph":
         model = SimpleGraphModel(in_channels=768, hidden_channels=hidden_channels, num_heads=num_heads)

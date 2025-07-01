@@ -132,11 +132,11 @@ def parse_args(parser):
     # Data args
     parser.add_argument("--data_path", type=str, default="data/clean_annotated_comments.csv")
     parser.add_argument("--output_dir", type=str, default="./camembertv2_results")
-    parser.add_argument('--size', type=str, default='large', help='the size of the dataset, can take one of the following values: ["small", "medium", "large", "small-1000", "cad"]')
+    parser.add_argument('--size', type=str, default='small', help='the size of the dataset, can take one of the following values: ["small", "medium", "large", "small-1000", "cad"]')
     parser.add_argument('--validation', type=bool, default=True, help='rather or not to use a validation set for model tuning')
     
     # Model args
-    parser.add_argument("--model-name", type=str, default="text-class", help='the model to use, can take one of the following values: ' + models_string)
+    parser.add_argument("--model-name", type=str, default="post_text_embed", help='the model to use, can take one of the following values: ' + models_string)
     parser.add_argument('--pretrained-model-name', type=str, default="almanach/camembertv2-base", help='name for pretrained text model to use to generate text embeddings, can take one of the following values: ' + pretrained_model_string)
     parser.add_argument("--attention-probs-dropout-prob", type=float, metavar="D", default=0.3, help="dropout probability for attention weights")
     parser.add_argument("--hidden-dropout-prob", type=float, metavar="D", default=0.3, help="dropout probability after hidden layer")
@@ -146,7 +146,7 @@ def parse_args(parser):
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--wd", type=float, default=0.01)
     parser.add_argument("--test-size", type=float, default=0.2)
-    parser.add_argument('--epochs', type=int, default=10, metavar='E', help='number of epochs')
+    parser.add_argument('--epochs', type=int, default=2, metavar='E', help='number of epochs')
 
     parser.add_argument("--seed", type=int, default=42)
     

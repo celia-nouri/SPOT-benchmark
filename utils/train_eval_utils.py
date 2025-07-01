@@ -14,6 +14,7 @@ from torch.cuda.amp import autocast, GradScaler
 from utils.construct_graph import get_graph, get_hetero_graph
 import json
 from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_score, recall_score
+from types import SimpleNamespace
 import numpy as np
 
 
@@ -109,7 +110,7 @@ def to_serializable_list(data):
         return data  # assume already serializable
 
 
-def evaluate_model(model, loader, model_name, device, output_file="", tune_threshold=True, best_threshold=0.5):
+def evaluate_model(model, loader, model_name, device, output_file="", tune_threshold=True, best_threshold=0.5, criterion=None):
     model.eval()
     thresholds = np.arange(0.1, 1.0, 0.1) if tune_threshold else [best_threshold]
     best_f1 = 0.0
@@ -133,8 +134,12 @@ def evaluate_model(model, loader, model_name, device, output_file="", tune_thres
             for batch in loader:
                 batch = {k: v.to(device) for k, v in batch.items()}
                 outputs = run_model_pred(model, batch, model_name)
+                logits = outputs.logits
                 labels = batch["labels"]
-                loss = outputs.loss
+
+                # Compute the loss using criterion
+                loss = criterion(logits, labels)
+                running_loss += loss.item()
 
                 running_loss, running_corrects, true_labels, predicted_labels = update_running_metrics(
                     loss.item(), outputs, labels,
@@ -144,7 +149,7 @@ def evaluate_model(model, loader, model_name, device, output_file="", tune_thres
                 )
 
                 logits_list.append(outputs.logits.detach().cpu())
-                if model_name == "text-class" and "index" in batch:
+                if "index" in batch:
                     indices_list.extend(batch["index"].detach().cpu().tolist())
 
             f1 = f1_score(true_labels, predicted_labels, zero_division=0)
@@ -173,7 +178,7 @@ def evaluate_model(model, loader, model_name, device, output_file="", tune_thres
                 "y": to_serializable_list(best_true),
                 "y_pred": to_serializable_list(best_logits)
             }
-            if model_name == "text-class":
+            if "index" in output_dict:
                 output_dict["index"] = best_indices
             json.dump(output_dict, outfile)
             outfile.write("\n")
@@ -187,16 +192,23 @@ def evaluate_model(model, loader, model_name, device, output_file="", tune_thres
         selected_threshold,
     )
 
-
 def run_model_pred(model, batch, model_name):
-    if model_name == "text-class":
+    if model_name in ["text_only", "post_text_concat"]:
+        # Standard HuggingFace AutoModelForSequenceClassification
         outputs = model(
             input_ids=batch["input_ids"],
             attention_mask=batch.get("attention_mask", None),
-            labels=batch.get("labels", None),
+            labels=None,  # loss handled outside
         )
-    return outputs
+        return outputs  # returns a ModelOutput with .logits
 
+    elif model_name == "post_text_embed":
+        # BERTContextEmb returns raw logits → wrap to mimic HuggingFace output
+        logits = model(batch)
+        return SimpleNamespace(logits=logits)  # makes it compatible with outputs.logits
+
+    else:
+        raise ValueError(f"Unknown model name: {model_name}")
 
 def update_running_metrics(loss, outputs, labels, running_loss, running_corrects, true_labels, predicted_labels, threshold=0.5):
     # Detach loss and add to running loss
@@ -337,7 +349,7 @@ def train(args, model, pretrained_model, train_loader, val_loader, test_loader, 
 
         # If validation, compute and report the main metrics on the validation set
         if validation and rank == 0:
-            avg_val_loss, val_accuracy, val_f1, val_precision, val_recall, val_best_threshold = evaluate_model(model, val_loader, model_name, device, f"{model_name}_{size}_{epoch}_val_outputs.tsv")
+            avg_val_loss, val_accuracy, val_f1, val_precision, val_recall, val_best_threshold = evaluate_model(model, val_loader, model_name, device, f"{model_name}_{size}_{epoch}_val_outputs.tsv", criterion=criterion)
             wandb.log({
                 "epoch": epoch + 1,
                 "val_loss": avg_val_loss,
@@ -371,7 +383,7 @@ def train(args, model, pretrained_model, train_loader, val_loader, test_loader, 
     # Finally, evaluate on the test set and report all metrics
     if rank == 0:
         print("Running evaluation ...")
-        test_loss, test_accuracy, test_f1, test_precision, test_recall, selected_threshold = evaluate_model(best_model, test_loader, model_name, device, f"{model_name}_{size}_test_outputs.tsv", best_threshold=best_threshold)
+        test_loss, test_accuracy, test_f1, test_precision, test_recall, selected_threshold = evaluate_model(best_model, test_loader, model_name, device, f"{model_name}_{size}_test_outputs.tsv", best_threshold=best_threshold, criterion=criterion)
         assert selected_threshold == best_threshold
 
         wandb.log({

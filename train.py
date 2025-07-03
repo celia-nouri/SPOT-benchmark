@@ -16,13 +16,14 @@ import wandb
 from utils.train_eval_utils import train, get_criterion
 from data.dataloaders import get_dataloads
 from models.model import all_model_names, all_base_pretrained_models, get_device, get_model
+from transformers import get_scheduler
+
 
 class FocalLoss(nn.Module):
-    def __init__(self, counts, device, alpha=0.5, gamma=0.5):
+    def __init__(self, class_counts, device, alpha=0.5, gamma=0.5):
         super().__init__()
         self.alpha = alpha
         self.gamma = gamma
-        class_counts = torch.tensor(counts)  
         class_weights = 1.0 / class_counts.float()
         class_weights = class_weights / class_weights.sum() 
         self.weight = class_weights.to(device)
@@ -34,6 +35,25 @@ class FocalLoss(nn.Module):
         pt = torch.exp(-ce_loss)  # softmax prob of the true class
         loss = self.alpha * ((1 - pt) ** self.gamma) * ce_loss
         return loss.mean()
+
+class FocalLoss2(nn.Module):
+    def __init__(self, alpha=1, gamma=2, logits=True, reduction='mean'):
+        super(FocalLoss2, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.logits = logits
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        if self.logits:
+            BCE_loss = F.binary_cross_entropy_with_logits(inputs, targets.float(), reduction='none')
+        else:
+            BCE_loss = F.binary_cross_entropy(inputs, targets.float(), reduction='none')
+        pt = torch.exp(-BCE_loss)
+        F_loss = self.alpha * (1 - pt) ** self.gamma * BCE_loss
+
+        return F_loss.mean() if self.reduction == 'mean' else F_loss.sum()
+
 
 def setup(rank, world_size):
     # Set required environment variables for env://
@@ -69,12 +89,17 @@ def run_experiments(rank, world_size, args):
     seed = args.seed
     pretrained_model = args.pretrained_model_name
     learning_rate = args.lr
-    weight_decay = args.wd    
+    weight_decay = args.wd   
+    loss_mino_class_weight = args.loss_minority_class_weight
+
     assert validation in [True, False], "Invalid validation setting: {}".format(validation)
     assert model_name in all_model_names, "Invalid model name: {}".format(model_name)
     assert size in ["small", "medium", "large"], "Invalid size setting: {}".format(size)
-    print(f"Args: {model_name} using pretrained model {pretrained_model} with seed {seed} on {size} Point d'arrêt dataset with validation={validation}, for {n_epochs} epochs, a learning rate of {learning_rate} and weight decay of {weight_decay}, batch sie if {args.batch_size}...")
+    print(f"Args: {model_name} using pretrained model {pretrained_model} with seed {seed} on {size} Point d'arrêt dataset with validation={validation}, for {n_epochs} epochs, a learning rate of {learning_rate} and weight decay of {weight_decay}, batch sie if {args.batch_size}, loss minority class weight is {loss_mino_class_weight}...")
     print(f"Distributed settings: Rank is {rank}, world size is {world_size}")
+
+
+    print(f"ARGUMENTS: {args}")
 
     device = get_device(rank=rank)
 
@@ -98,6 +123,7 @@ def run_experiments(rank, world_size, args):
         distributed=True,      
         rank=rank,
         world_size=world_size,
+        model_name=model_name,
     )
 
     if rank == 0:
@@ -112,11 +138,25 @@ def run_experiments(rank, world_size, args):
 
 
     # Define optimizer and loss function
-    print(f"class counts {class_counts}")
-    #criterion = FocalLoss(class_counts, device)
+    if loss_mino_class_weight < 0:
+        class_counts = torch.tensor(class_counts) 
+        class_weights = 1.0 / class_counts.float()
+        class_weights = class_weights / class_weights.sum()
+    else:
+        class_weights = torch.tensor([1 - loss_mino_class_weight, loss_mino_class_weight])
+    print(f"class weights {class_weights}")
+    if args.loss == "focal":
+        criterion = FocalLoss(class_counts, device)
+    else:
+        criterion = get_criterion(device=device, balanced=False, class_weights=class_weights)
 
-    criterion = get_criterion(device=device, balanced=False, class_counts=class_counts)
-    #criterion = FocalLoss(gamma=2.0, alpha=[0.25, 0.75])  # alpha can be class weights
+    #lr_scheduler = get_scheduler(
+    #    name="linear",
+    #    optimizer=optimizer,
+    #    num_warmup_steps=100,
+    #    num_training_steps=total_steps
+    #)
+
     optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     # Train
@@ -132,18 +172,21 @@ def parse_args(parser):
     # Data args
     parser.add_argument("--data_path", type=str, default="data/clean_annotated_comments.csv")
     parser.add_argument("--output_dir", type=str, default="./camembertv2_results")
-    parser.add_argument('--size', type=str, default='small', help='the size of the dataset, can take one of the following values: ["small", "medium", "large", "small-1000", "cad"]')
+    parser.add_argument('--size', type=str, default='large', help='the size of the dataset, can take one of the following values: ["small", "medium", "large", "small-1000", "cad"]')
     parser.add_argument('--validation', type=bool, default=True, help='rather or not to use a validation set for model tuning')
+    parser.add_argument("--loss-minority-class-weight", type=float, default=-1, help='cross entropy loss weight applied to the minority class, if negative, then the class weight is computed using the train set class distribution')
     
     # Model args
-    parser.add_argument("--model-name", type=str, default="post_text_embed", help='the model to use, can take one of the following values: ' + models_string)
-    parser.add_argument('--pretrained-model-name', type=str, default="almanach/camembertv2-base", help='name for pretrained text model to use to generate text embeddings, can take one of the following values: ' + pretrained_model_string)
+    parser.add_argument("--model-name", type=str, default="text_only", help='the model to use, can take one of the following values: ' + models_string)
+    parser.add_argument('--pretrained-model-name', type=str, default="almanach/camembert-base", help='name for pretrained text model to use to generate text embeddings, can take one of the following values: ' + pretrained_model_string)
     parser.add_argument("--attention-probs-dropout-prob", type=float, metavar="D", default=0.3, help="dropout probability for attention weights")
     parser.add_argument("--hidden-dropout-prob", type=float, metavar="D", default=0.3, help="dropout probability after hidden layer")
+    parser.add_argument("--loss", type=str, default="focal", help='loss can be: focal, crossentropy ...')
+
     
     # Hyper params
     parser.add_argument("--batch-size", type=int, default=4)
-    parser.add_argument("--lr", type=float, default=2e-5)
+    parser.add_argument("--lr", type=float, default=3e-5)
     parser.add_argument("--wd", type=float, default=0.01)
     parser.add_argument("--test-size", type=float, default=0.2)
     parser.add_argument('--epochs', type=int, default=2, metavar='E', help='number of epochs')

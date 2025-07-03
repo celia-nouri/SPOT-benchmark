@@ -21,12 +21,8 @@ import numpy as np
 tokenizerRobertaHS = AutoTokenizer.from_pretrained("camembert-base")
 
 
-def get_criterion(device, balanced=False, class_counts=[]):
+def get_criterion(device, balanced=False, class_weights=[]):
     if not balanced:
-        class_counts = torch.tensor(class_counts) 
-        class_weights = 1.0 / class_counts.float()
-        class_weights = class_weights / class_weights.sum()
-        class_weights = torch.tensor([0.3, 0.7]) # going for less extreme class weights.
         class_weights = class_weights.to(device)
         print('class weights ', class_weights, ' class 0 should have lower weight since it has more samples')
         
@@ -137,6 +133,10 @@ def evaluate_model(model, loader, model_name, device, output_file="", tune_thres
                 logits = outputs.logits
                 labels = batch["labels"]
 
+                # Sanity checks
+                assert logits.shape[1] == 2, f"Expected 2 output classes, got {logits.shape}"
+                assert labels.dtype == torch.long, f"Expected long labels for CrossEntropyLoss, got {labels.dtype}"
+
                 # Compute the loss using criterion
                 loss = criterion(logits, labels)
                 running_loss += loss.item()
@@ -153,7 +153,7 @@ def evaluate_model(model, loader, model_name, device, output_file="", tune_thres
                     indices_list.extend(batch["index"].detach().cpu().tolist())
 
             f1 = f1_score(true_labels, predicted_labels, zero_division=0)
-            if not tune_threshold or f1 > best_f1:
+            if tune_threshold and f1 > best_f1:
                 best_f1 = f1
                 selected_threshold = t
                 best_preds = predicted_labels
@@ -167,7 +167,15 @@ def evaluate_model(model, loader, model_name, device, output_file="", tune_thres
                     "recall": recall_score(best_true, best_preds, zero_division=0),
                     "f1": f1,
                 }
-                if tune_threshold:
+                if not tune_threshold:
+                    best_metrics = {
+                        "loss": running_loss / len(best_true),
+                        "accuracy": float(running_corrects) / len(best_true),
+                        "precision": precision_score(best_true, best_preds, zero_division=0),
+                        "recall": recall_score(best_true, best_preds, zero_division=0),
+                        "f1": f1,
+                    }
+                else:
                     print(f"[Threshold {t:.1f}] F1 = {f1:.4f}")
 
     # Write output if needed
@@ -219,6 +227,9 @@ def update_running_metrics(loss, outputs, labels, running_loss, running_corrects
     probs = torch.softmax(outputs.logits, dim=1)
     preds = (probs[:, 1] > threshold).long()
 
+    preds = torch.argmax(outputs.logits, dim=1)
+
+
     # Count correct predictions
     running_corrects += torch.sum(preds == labels).item()
 
@@ -233,7 +244,11 @@ def train(args, model, pretrained_model, train_loader, val_loader, test_loader, 
     num_epochs, model_name, validation, size = args.epochs, args.model_name, args.validation, args.size
     distributed = isinstance(train_loader.sampler, torch.utils.data.distributed.DistributedSampler)
 
+    total_train_samples = torch.tensor(len(train_loader), device=device)
+    dist.all_reduce(total_train_samples, op=dist.ReduceOp.SUM)
+
     if rank == 0:
+        print("Total Training Set Size: ", total_train_samples)
         print("Training set size: ", len(train_loader))
         print("Validation set size: ", len(val_loader))
         print("Test set size: ", len(test_loader))
@@ -383,7 +398,7 @@ def train(args, model, pretrained_model, train_loader, val_loader, test_loader, 
     # Finally, evaluate on the test set and report all metrics
     if rank == 0:
         print("Running evaluation ...")
-        test_loss, test_accuracy, test_f1, test_precision, test_recall, selected_threshold = evaluate_model(best_model, test_loader, model_name, device, f"{model_name}_{size}_test_outputs.tsv", best_threshold=best_threshold, criterion=criterion)
+        test_loss, test_accuracy, test_f1, test_precision, test_recall, selected_threshold = evaluate_model(best_model, test_loader, model_name, device, f"{model_name}_{size}_test_outputs.tsv", tune_threshold=False, best_threshold=best_threshold, criterion=criterion)
         assert selected_threshold == best_threshold
 
         wandb.log({

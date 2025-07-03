@@ -19,11 +19,21 @@ def get_dataloads(
     
     if "stop" not in df.columns or "text" not in df.columns:
         raise ValueError("CSV must contain 'stop' and 'text' columns.")
+    if "account_name" not in df.columns:
+        raise ValueError("CSV must contain 'account_name' column for community-based model_name options.")
+    if "page_group_type" not in df.columns:
+        raise ValueError("CSV must contain 'page_group_type' column for community-based model_name options.")
     if model_name in {"post_text_concat", "post_text_embed"} and "share_title" not in df.columns:
         raise ValueError("CSV must contain 'post_title' column for this model_name.")
     
     df['labels'] = df['stop'].apply(lambda x: 0 if x == 'no_stop' else 1)
     df['index'] = range(1, len(df) + 1)
+
+    # clean string fields and fill Nan with empty string
+    df["share_title"] = df["share_title"].fillna("").astype(str)
+    df["text"] = df["text"].fillna("").astype(str)
+    df["account_name"] = df["account_name"].fillna("").astype(str)
+    df["page_group_type"] = df["page_group_type"].fillna("").astype(str)
 
     if size == "small":
         df = df.sample(n=100, random_state=seed)
@@ -47,9 +57,53 @@ def get_dataloads(
         tokens["index"] = batch["index"]
         return tokens
 
-    def tokenize_concat(batch):
+    def tokenize_post_concat(batch):
         sep_token = tokenizer.sep_token or "[SEP]"
         concat_text = [t + f" {sep_token} " + title for t, title in zip(batch["text"], batch["share_title"])]
+        tokens = tokenizer(concat_text, truncation=True, padding="max_length")
+        tokens["labels"] = batch["labels"]
+        tokens["index"] = batch["index"]
+        return tokens
+
+    def tokenize_commu_concat(batch):
+        sep_token = tokenizer.sep_token or "[SEP]"
+        concat_text = [
+            f"{acc} {sep_token} {t}"
+            for acc, t in zip(batch["account_name"], batch["text"])
+        ]
+        tokens = tokenizer(concat_text, truncation=True, padding="max_length")
+        tokens["labels"] = batch["labels"]
+        tokens["index"] = batch["index"]
+        return tokens
+
+    def tokenize_commu_type_concat(batch):
+        sep_token = tokenizer.sep_token or "[SEP]"
+        concat_text = [
+            f"{acc} {page_type} {sep_token} {t}"
+            for acc, page_type, t in zip(batch["account_name"], batch["page_group_type"], batch["text"])
+        ]
+        tokens = tokenizer(concat_text, truncation=True, padding="max_length")
+        tokens["labels"] = batch["labels"]
+        tokens["index"] = batch["index"]
+        return tokens
+    
+    def tokenize_commu_post_concat(batch):
+        sep_token = tokenizer.sep_token or "[SEP]"
+        concat_text = [
+            f"{acc} {sep_token} {t} {sep_token} {title}"
+            for acc, t, title in zip(batch["account_name"], batch["text"], batch["share_title"])
+        ]
+        tokens = tokenizer(concat_text, truncation=True, padding="max_length")
+        tokens["labels"] = batch["labels"]
+        tokens["index"] = batch["index"]
+        return tokens
+
+    def tokenize_commu_type_post_concat(batch):
+        sep_token = tokenizer.sep_token or "[SEP]"
+        concat_text = [
+            f"{acc} {page_type} {sep_token} {t} {sep_token} {title}"
+            for acc, page_type, t, title in zip(batch["account_name"], batch["page_group_type"], batch["text"], batch["share_title"])
+        ]
         tokens = tokenizer(concat_text, truncation=True, padding="max_length")
         tokens["labels"] = batch["labels"]
         tokens["index"] = batch["index"]
@@ -67,16 +121,29 @@ def get_dataloads(
         output["index"] = batch["index"]
         return output
 
-
     if model_name == "text_only":
         cols = ['text', 'labels', 'index']
         tok_func = tokenize_text_only
-    elif model_name == "post_text_concat":
+    elif model_name == "text_post_concat":
         cols = ['text', 'share_title', 'labels', 'index']
-        tok_func = tokenize_concat
+        tok_func = tokenize_post_concat
+    elif model_name == "com_text_concat":
+        cols = ['text', 'account_name', 'labels', 'index']
+        tok_func = tokenize_commu_concat
+    elif model_name == "com_text_post_concat":
+        cols = ['text', 'account_name', 'share_title', 'labels', 'index']
+        tok_func = tokenize_post_concat
+    elif model_name == "com_type_text_concat":
+        cols = ['text', 'account_name', 'page_group_type', 'labels', 'index']
+        tok_func = tokenize_commu_type_concat
+    elif model_name == "com_type_text_post_concat":
+        cols = ['text', 'account_name', 'page_group_type', 'share_title', 'labels', 'index']
+        tok_func = tokenize_commu_type_post_concat
     else:  # post_text_embed
         cols = ['text', 'share_title', 'labels', 'index']
         tok_func = tokenize_dual
+
+
 
     #train_dataset = Dataset.from_pandas(train_df[cols]).map(tok_func, batched=True)
     #test_dataset = Dataset.from_pandas(test_df[cols]).map(tok_func, batched=True)
@@ -85,16 +152,17 @@ def get_dataloads(
 
     # Convert to HuggingFace Datasets
     train_dataset = Dataset.from_pandas(train_df[cols]).map(
-        tok_func, batched=True, remove_columns=cols
-    )
+        tok_func, batched=True
+        )
     test_dataset = Dataset.from_pandas(test_df[cols]).map(
-        tok_func, batched=True, remove_columns=cols
+        tok_func, batched=True
     )
     if validation:
         val_dataset = Dataset.from_pandas(val_df[cols]).map(
-            tok_func, batched=True, remove_columns=cols
-        )
-
+            tok_func, batched=True
+            )
+    
+    print("Train columns after mapping:", train_dataset.column_names)
 
     # Set output format
     if model_name in {"text_only", "post_text_concat"}:
@@ -151,6 +219,9 @@ def get_dataloads_old(
 
     # Add 1-based index column
     df['index'] = range(1, len(df) + 1)
+    
+    df["account_name"] = df["account_name"].fillna("").astype(str)
+    df["page_group_type"] = df["page_group_type"].fillna("").astype(str)
 
     # Sample the dataset by size
     if size == "small":

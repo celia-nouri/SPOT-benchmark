@@ -16,6 +16,11 @@ all_model_names = [
     "com_text_post_concat", # Text classifier over the account name [SEP] comment text [SEP] post title
     "com_type_text_concat", # Text classifier over the account name page type [SEP] comment text
     "com_type_text_post_concat", # Text classifier over the account name page type [SEP] comment text [SEP] post title
+    "domain_text_concat", # Text classifier over the domain name [SEP] comment text
+    "source_text_concat", # Text classifier over the source type [SEP] comment text
+    "theme_text_concat", # Text classifier over the theme [SEP] comment text
+    "domain_source_text_concat", # Text classifier over the domain name source type [SEP] comment text
+    "domain_theme_text_concat", # Text classifier over the domain name theme [SEP] comment text
     "post_text_embed" # Generates embeddings for the comment text and post title, combine them with a FC layer, then classify
     ]
 

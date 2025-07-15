@@ -35,6 +35,11 @@ def get_dataloads(
     df["account_name"] = df["account_name"].fillna("").astype(str)
     df["page_group_type"] = df["page_group_type"].fillna("").astype(str)
 
+    df["parent_domain"] = df["parent_domain"].fillna("").astype(str)
+    df["source_type"] = df["source_type"].fillna("").astype(str)
+    df["theme"] = df["theme"].fillna("").astype(str)
+
+
     if size == "small":
         df = df.sample(n=100, random_state=seed)
     elif size == "medium":
@@ -109,6 +114,59 @@ def get_dataloads(
         tokens["index"] = batch["index"]
         return tokens
 
+    # source
+    def tokenize_domain_concat(batch):
+        sep_token = tokenizer.sep_token or "[SEP]"
+        concat_text = [
+            f"{dom} {sep_token} {t}"
+            for dom, t in zip(batch["parent_domain"], batch["text"])
+        ]
+        tokens = tokenizer(concat_text, truncation=True, padding="max_length")
+        tokens["labels"] = batch["labels"]
+        tokens["index"] = batch["index"]
+        return tokens    
+    def tokenize_source_concat(batch):
+        sep_token = tokenizer.sep_token or "[SEP]"
+        concat_text = [
+            f"{src} {sep_token} {t}"
+            for src, t in zip(batch["source_type"], batch["text"])
+        ]
+        tokens = tokenizer(concat_text, truncation=True, padding="max_length")
+        tokens["labels"] = batch["labels"]
+        tokens["index"] = batch["index"]
+        return tokens
+    def tokenize_theme_concat(batch):
+        sep_token = tokenizer.sep_token or "[SEP]"
+        concat_text = [
+            f"{thm} {sep_token} {t}"
+            for thm, t in zip(batch["theme"], batch["text"])
+        ]
+        tokens = tokenizer(concat_text, truncation=True, padding="max_length")
+        tokens["labels"] = batch["labels"]
+        tokens["index"] = batch["index"]
+        return tokens  
+    def tokenize_domain_source_concat(batch):
+        sep_token = tokenizer.sep_token or "[SEP]"
+        concat_text = [
+            f"{dom} {src} {sep_token} {t}"
+            for dom, src, t in zip(batch["parent_domain"], batch["source_type"], batch["text"])
+        ]
+        tokens = tokenizer(concat_text, truncation=True, padding="max_length")
+        tokens["labels"] = batch["labels"]
+        tokens["index"] = batch["index"]
+        return tokens
+    def tokenize_domain_theme_concat(batch):
+        sep_token = tokenizer.sep_token or "[SEP]"
+        concat_text = [
+            f"{dom} {thm} {sep_token} {t}"
+            for dom, thm, t in zip(batch["parent_domain"], batch["theme"], batch["text"])
+        ]
+        tokens = tokenizer(concat_text, truncation=True, padding="max_length")
+        tokens["labels"] = batch["labels"]
+        tokens["index"] = batch["index"]
+        return tokens
+    
+
     def tokenize_dual(batch):
         output = {}
         text_tok = tokenizer(batch["text"], truncation=True, padding="max_length")
@@ -132,13 +190,28 @@ def get_dataloads(
         tok_func = tokenize_commu_concat
     elif model_name == "com_text_post_concat":
         cols = ['text', 'account_name', 'share_title', 'labels', 'index']
-        tok_func = tokenize_post_concat
+        tok_func = tokenize_commu_post_concat
     elif model_name == "com_type_text_concat":
         cols = ['text', 'account_name', 'page_group_type', 'labels', 'index']
         tok_func = tokenize_commu_type_concat
     elif model_name == "com_type_text_post_concat":
         cols = ['text', 'account_name', 'page_group_type', 'share_title', 'labels', 'index']
         tok_func = tokenize_commu_type_post_concat
+    elif model_name == "text_domain_concat":
+        cols = ['text', 'parent_domain', 'labels', 'index']
+        tok_func = tokenize_domain_concat
+    elif model_name == "text_source_concat":
+        cols = ['text', 'source_type', 'labels', 'index']
+        tok_func = tokenize_source_concat
+    elif model_name == "text_theme_concat":
+        cols = ['text', 'theme', 'labels', 'index']
+        tok_func = tokenize_theme_concat
+    elif model_name == "text_domain_source_concat":
+        cols = ['text', 'parent_domain', 'source_type', 'labels', 'index']
+        tok_func = tokenize_domain_source_concat
+    elif model_name == "text_domain_theme_concat":
+        cols = ['text', 'parent_domain', 'theme', 'labels', 'index']
+        tok_func = tokenize_domain_theme_concat
     else:  # post_text_embed
         cols = ['text', 'share_title', 'labels', 'index']
         tok_func = tokenize_dual
@@ -165,7 +238,7 @@ def get_dataloads(
     print("Train columns after mapping:", train_dataset.column_names)
 
     # Set output format
-    if model_name in {"text_only", "post_text_concat"}:
+    if model_name == "text_only" or "_concat" in model_name:
         columns = ["input_ids", "attention_mask", "labels", "index"]
     else:  # post_text_embed
         columns = [

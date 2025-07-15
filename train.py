@@ -181,12 +181,12 @@ def parse_args(parser):
     parser.add_argument('--pretrained-model-name', type=str, default="almanach/camembert-base", help='name for pretrained text model to use to generate text embeddings, can take one of the following values: ' + pretrained_model_string)
     parser.add_argument("--attention-probs-dropout-prob", type=float, metavar="D", default=0.3, help="dropout probability for attention weights")
     parser.add_argument("--hidden-dropout-prob", type=float, metavar="D", default=0.3, help="dropout probability after hidden layer")
-    parser.add_argument("--loss", type=str, default="focal", help='loss can be: focal, crossentropy ...')
+    parser.add_argument("--loss", type=str, default="crossentropy", help='loss can be: focal, crossentropy ...')
 
     
     # Hyper params
     parser.add_argument("--batch-size", type=int, default=4)
-    parser.add_argument("--lr", type=float, default=3e-5)
+    parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--wd", type=float, default=0.01)
     parser.add_argument("--test-size", type=float, default=0.2)
     parser.add_argument('--epochs', type=int, default=2, metavar='E', help='number of epochs')

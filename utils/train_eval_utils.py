@@ -112,7 +112,13 @@ def evaluate_model(model, loader, model_name, device, output_file="", tune_thres
     best_f1 = 0.0
     selected_threshold = best_threshold
 
-    best_metrics = {}
+    best_metrics = {
+        "loss": 0,
+        "accuracy": 0,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0,
+    }
     best_preds = []
     best_true = []
     best_logits = []
@@ -167,16 +173,16 @@ def evaluate_model(model, loader, model_name, device, output_file="", tune_thres
                     "recall": recall_score(best_true, best_preds, zero_division=0),
                     "f1": f1,
                 }
-                if not tune_threshold:
-                    best_metrics = {
-                        "loss": running_loss / len(best_true),
-                        "accuracy": float(running_corrects) / len(best_true),
-                        "precision": precision_score(best_true, best_preds, zero_division=0),
-                        "recall": recall_score(best_true, best_preds, zero_division=0),
-                        "f1": f1,
-                    }
-                else:
-                    print(f"[Threshold {t:.1f}] F1 = {f1:.4f}")
+            if not tune_threshold:
+                best_metrics = {
+                    "loss": running_loss / len(true_labels),
+                    "accuracy": float(running_corrects) / len(true_labels),
+                    "precision": precision_score(true_labels, predicted_labels, zero_division=0),
+                    "recall": recall_score(true_labels, predicted_labels, zero_division=0),
+                    "f1": f1,
+                }
+            else:
+                print(f"[Threshold {t:.1f}] F1 = {f1:.4f}")
 
     # Write output if needed
     if output_file:
@@ -201,7 +207,7 @@ def evaluate_model(model, loader, model_name, device, output_file="", tune_thres
     )
 
 def run_model_pred(model, batch, model_name):
-    if model_name in ["text_only", "post_text_concat"]:
+    if model_name == "text_only" or "_concat" in model_name:
         # Standard HuggingFace AutoModelForSequenceClassification
         outputs = model(
             input_ids=batch["input_ids"],
@@ -226,9 +232,6 @@ def update_running_metrics(loss, outputs, labels, running_loss, running_corrects
     #preds = torch.argmax(outputs.logits, dim=1)
     probs = torch.softmax(outputs.logits, dim=1)
     preds = (probs[:, 1] > threshold).long()
-
-    preds = torch.argmax(outputs.logits, dim=1)
-
 
     # Count correct predictions
     running_corrects += torch.sum(preds == labels).item()
@@ -364,7 +367,7 @@ def train(args, model, pretrained_model, train_loader, val_loader, test_loader, 
 
         # If validation, compute and report the main metrics on the validation set
         if validation and rank == 0:
-            avg_val_loss, val_accuracy, val_f1, val_precision, val_recall, val_best_threshold = evaluate_model(model, val_loader, model_name, device, f"{model_name}_{size}_{epoch}_val_outputs.tsv", criterion=criterion)
+            avg_val_loss, val_accuracy, val_f1, val_precision, val_recall, val_best_threshold = evaluate_model(model, val_loader, model_name, device, f"{model_name}_{size}_{epoch}_val_outputs.tsv", tune_threshold=True, criterion=criterion)
             wandb.log({
                 "epoch": epoch + 1,
                 "val_loss": avg_val_loss,

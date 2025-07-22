@@ -197,46 +197,43 @@ def get_dataloads(
     elif model_name == "com_type_text_post_concat":
         cols = ['text', 'account_name', 'page_group_type', 'share_title', 'labels', 'index']
         tok_func = tokenize_commu_type_post_concat
-    elif model_name == "text_domain_concat":
+    elif model_name == "domain_text_concat":
         cols = ['text', 'parent_domain', 'labels', 'index']
         tok_func = tokenize_domain_concat
-    elif model_name == "text_source_concat":
+    elif model_name == "source_text_concat":
         cols = ['text', 'source_type', 'labels', 'index']
         tok_func = tokenize_source_concat
-    elif model_name == "text_theme_concat":
+    elif model_name == "theme_text_concat":
         cols = ['text', 'theme', 'labels', 'index']
         tok_func = tokenize_theme_concat
-    elif model_name == "text_domain_source_concat":
+    elif model_name == "domain_source_text_concat":
         cols = ['text', 'parent_domain', 'source_type', 'labels', 'index']
         tok_func = tokenize_domain_source_concat
-    elif model_name == "text_domain_theme_concat":
+    elif model_name == "domain_theme_text_concat":
         cols = ['text', 'parent_domain', 'theme', 'labels', 'index']
         tok_func = tokenize_domain_theme_concat
     else:  # post_text_embed
         cols = ['text', 'share_title', 'labels', 'index']
         tok_func = tokenize_dual
 
-
-
-    #train_dataset = Dataset.from_pandas(train_df[cols]).map(tok_func, batched=True)
-    #test_dataset = Dataset.from_pandas(test_df[cols]).map(tok_func, batched=True)
-    #val_dataset = Dataset.from_pandas(val_df[cols]).map(tok_func, batched=True) if validation else None
-
+    train_dataset, val_dataset = None, None
+    class_counts = []
 
     # Convert to HuggingFace Datasets
-    train_dataset = Dataset.from_pandas(train_df[cols]).map(
-        tok_func, batched=True
+    if not train_df.empty:
+        train_dataset = Dataset.from_pandas(train_df[cols]).map(
+            tok_func, batched=True
+            )
+        
+    if not test_df.empty:
+        test_dataset = Dataset.from_pandas(test_df[cols]).map(
+            tok_func, batched=True
         )
-    test_dataset = Dataset.from_pandas(test_df[cols]).map(
-        tok_func, batched=True
-    )
-    if validation:
+    if validation and not val_df.empty:
         val_dataset = Dataset.from_pandas(val_df[cols]).map(
             tok_func, batched=True
             )
     
-    print("Train columns after mapping:", train_dataset.column_names)
-
     # Set output format
     if model_name == "text_only" or "_concat" in model_name:
         columns = ["input_ids", "attention_mask", "labels", "index"]
@@ -246,8 +243,11 @@ def get_dataloads(
             "title_input_ids", "title_attention_mask",
             "labels", "index"
         ]
-    train_dataset.set_format("torch", columns=columns)
-    test_dataset.set_format("torch", columns=columns)
+
+    if train_dataset:
+        train_dataset.set_format("torch", columns=columns)
+    if test_dataset:
+        test_dataset.set_format("torch", columns=columns)
     if val_dataset:
         val_dataset.set_format("torch", columns=columns)
 
@@ -266,93 +266,16 @@ def get_dataloads(
     else:
         data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
-    train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True) if distributed else None
+    train_loader, test_loader, val_loader = None, None, None
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=(train_sampler is None), sampler=train_sampler, collate_fn=data_collator)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=data_collator)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=data_collator) if validation else None
-
-    return train_loader, test_loader, val_loader, class_counts
-
-
-def get_dataloads_old(
-    data_path, size="small", validation=False, test_size=0.2,
-    tokenizer_name="camembert-base", batch_size=8, seed=42,
-    distributed=False, rank=None, world_size=None
-):    
-    print(f"Loading dataset from {data_path}, size is {size}, validation is {validation}, test size is {test_size}...")
+    if train_dataset:
+        train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True) if distributed else None
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=(train_sampler is None), sampler=train_sampler, collate_fn=data_collator)
     
-    df = pd.read_csv(data_path, low_memory=False)
+    if test_dataset:
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=data_collator)
     
-    if "stop" not in df.columns or "text" not in df.columns:
-        raise ValueError("CSV must contain 'stop' and 'text' columns.")
-
-    # Convert stop column to binary labels
-    df['labels'] = df['stop'].apply(lambda x: 0 if x == 'no_stop' else 1)
-
-    # Add 1-based index column
-    df['index'] = range(1, len(df) + 1)
-    
-    df["account_name"] = df["account_name"].fillna("").astype(str)
-    df["page_group_type"] = df["page_group_type"].fillna("").astype(str)
-
-    # Sample the dataset by size
-    if size == "small":
-        df = df.sample(n=100, random_state=seed)
-    elif size == "medium":
-        df = df.sample(n=1000, random_state=seed)
-    elif size == "large":
-        pass  # use full dataset
-    else:
-        raise ValueError("Size must be one of: small, medium, large")
-
-    # Split into train/test using stratified sampling
-    train_df, test_df = train_test_split(df, test_size=test_size, stratify=df['labels'], random_state=seed)
-
-
-    if validation:
-        # Further split train into train/val stratified
-        train_df, val_df = train_test_split(train_df, test_size=0.2, stratify=train_df['labels'], random_state=seed)
-    
-    class_counts = train_df['labels'].value_counts(sort=False).tolist()
-
-    # Tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-
-    def tokenize(batch):
-        return tokenizer(batch["text"], truncation=True, padding="max_length")
-    
-
-    train_dataset = Dataset.from_pandas(train_df[['text', 'labels', 'index']]).map(tokenize, batched=True)
-    test_dataset = Dataset.from_pandas(test_df[['text', 'labels', 'index']]).map(tokenize, batched=True)
-    val_dataset = None
-    if validation:
-        val_dataset = Dataset.from_pandas(val_df[['text', 'labels', 'index']]).map(tokenize, batched=True)
-
-    # Set PyTorch format
-    train_dataset.set_format("torch", columns=["input_ids", "attention_mask", "labels", "index"])
-    test_dataset.set_format("torch", columns=["input_ids", "attention_mask", "labels", "index"])
     if val_dataset:
-        val_dataset.set_format("torch", columns=["input_ids", "attention_mask", "labels", "index"])
-
-    # Data collator for dynamic padding
-    data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
-
-    # Handle distributed cases
-    if distributed:
-        train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True)
-    else:
-        train_sampler = None
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=(train_sampler is None),
-        sampler=train_sampler,
-        collate_fn=data_collator
-    )
-
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=data_collator)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=data_collator) if validation else None
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=data_collator) if validation else None
 
     return train_loader, test_loader, val_loader, class_counts

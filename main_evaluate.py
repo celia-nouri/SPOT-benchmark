@@ -2,6 +2,7 @@ import argparse
 import json
 import numpy as np
 import os
+import pandas as pd
 import random
 from transformers import AdamW
 from transformers import set_seed
@@ -13,7 +14,7 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 import wandb
 
-from utils.train_eval_utils import evaluate_model, get_criterion
+from utils.train_eval_utils import evaluate_model, inference_model, get_criterion
 from data.dataloaders import get_dataloads
 from models.model import all_model_names, all_base_pretrained_models, get_device, get_model
 from transformers import get_scheduler
@@ -40,7 +41,7 @@ def run_eval(args):
     weight_decay = args.wd   
     loss_mino_class_weight = args.loss_minority_class_weight
     checkpoint_path = args.checkpoint_path
-
+    inference_mode = args.inference_only
 
     assert validation in [True, False], "Invalid validation setting: {}".format(validation)
     assert model_name in all_model_names, "Invalid model name: {}".format(model_name)
@@ -107,24 +108,42 @@ def run_eval(args):
 
     # Now load the fixed state dict into your model
     model.load_state_dict(new_state_dict, strict=False)
-
     model.eval()
 
-    print("Running evaluation ...")
-    test_loss, test_accuracy, test_f1, test_precision, test_recall, selected_threshold = evaluate_model(model, test_loader, model_name, device, f"{model_name}_{size}_test_outputs.tsv", tune_threshold=False, best_threshold=args.threshold, criterion=criterion)
+    if inference_mode:
+        print("Running inference ...")
+        pred_labels, pred_scores, pred_indices = inference_model(model, test_loader, model_name, device, threshold=args.threshold)
 
-    assert selected_threshold == args.threshold 
+        # Read the original dataframe to preserve other columns
+        df = pd.read_csv(args.data_path)
+        df = df.reset_index(drop=True)
+        df["pred_label"] = pd.Series(pred_labels, index=pred_indices)
+        df["pred_score"] = pd.Series(pred_scores, index=pred_indices)
+        df = df.sort_index()
 
-    wandb.log({
-        "test_loss": test_loss,
-        "test_accuracy": test_accuracy,
-        "test_precision": test_precision,
-        "test_recall": test_recall,
-        "test_f1": test_f1
-    })
-    print(f"Test Loss: {test_loss:.4f}, "
-        f"Test Accuracy: {test_accuracy:.4f}, Test Precision: {test_precision:.4f}, "
-        f"Test Recall: {test_recall:.4f}, Test F1 Score: {test_f1:.4f}, Threshold: {selected_threshold:.4f}")
+        # Write output
+        if args.output_csv:
+            df.to_csv(args.output_csv, index=False)
+            print(f"Inference completed. Results saved to {args.output_csv}")
+        else:
+            print("No output path provided. Use --output-csv to save predictions.")
+        
+    else: # Evaluation
+        print("Running evaluation ...")
+        test_loss, test_accuracy, test_f1, test_precision, test_recall, selected_threshold = evaluate_model(model, test_loader, model_name, device, f"{model_name}_{size}_test_outputs.tsv", tune_threshold=False, best_threshold=args.threshold, criterion=criterion)
+
+        assert selected_threshold == args.threshold 
+
+        wandb.log({
+            "test_loss": test_loss,
+            "test_accuracy": test_accuracy,
+            "test_precision": test_precision,
+            "test_recall": test_recall,
+            "test_f1": test_f1
+        })
+        print(f"Test Loss: {test_loss:.4f}, "
+            f"Test Accuracy: {test_accuracy:.4f}, Test Precision: {test_precision:.4f}, "
+            f"Test Recall: {test_recall:.4f}, Test F1 Score: {test_f1:.4f}, Threshold: {selected_threshold:.4f}")
 
     # Finish the run
     wandb.finish()
@@ -150,7 +169,7 @@ def parse_args(parser):
     parser.add_argument("--attention-probs-dropout-prob", type=float, metavar="D", default=0.3, help="dropout probability for attention weights")
     parser.add_argument("--hidden-dropout-prob", type=float, metavar="D", default=0.3, help="dropout probability after hidden layer")
     parser.add_argument("--loss", type=str, default="crossentropy", help='loss can be: focal, crossentropy ...')
-    parser.add_argument("--threshold", type=float, default=0.1, help='best threshold value determined during training on the validation set')
+    parser.add_argument("--threshold", type=float, default=0.9, help='best threshold value determined during training on the validation set')
 
     
     # Hyper params
@@ -160,6 +179,10 @@ def parse_args(parser):
     parser.add_argument("--test-size", type=float, default=0.2)
     parser.add_argument('--epochs', type=int, default=2, metavar='E', help='number of epochs')
     parser.add_argument("--seed", type=int, default=42)
+
+    # Inference argument
+    parser.add_argument('--inference-only', action='store_true', help='Run inference only and write predictions to CSV')
+    parser.add_argument('--output-csv', type=str, default=None, help='Path to save inference results (CSV with predicted scores and labels)')
 
     return parser.parse_args()
 

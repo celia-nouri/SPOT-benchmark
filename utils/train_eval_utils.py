@@ -206,6 +206,49 @@ def evaluate_model(model, loader, model_name, device, output_file="", tune_thres
         selected_threshold,
     )
 
+
+def inference_model(model, loader, model_name, device, threshold=0.5):
+    """
+    Run inference on a dataloader without computing metrics.
+    
+    Args:
+        model: Trained model.
+        loader: DataLoader (no shuffle, with index).
+        model_name: Model identifier.
+        device: CUDA or CPU.
+        threshold: Probability threshold to convert logits to binary predictions.
+
+    Returns:
+        pred_labels: List of binary predictions.
+        pred_scores: List of class 1 probabilities.
+        pred_indices: List of original data indices.
+    """
+    model.eval()
+    pred_labels = []
+    pred_scores = []
+    pred_indices = []
+
+    with torch.no_grad():
+        for batch in tqdm(loader, desc="Running inference"):
+            batch = {k: v.to(device) for k, v in batch.items()}
+            outputs = run_model_pred(model, batch, model_name)
+            logits = outputs.logits
+
+            probs = F.softmax(logits, dim=1)
+            scores = probs[:, 1]  # Probability of class 1
+            preds = (scores > threshold).long()
+
+            pred_labels.extend(preds.cpu().tolist())
+            pred_scores.extend(scores.cpu().tolist())
+
+            if "index" in batch:
+                pred_indices.extend(batch["index"].cpu().tolist())
+            else:
+                # Fallback: just keep count if no indices are provided
+                pred_indices.extend(list(range(len(pred_labels) - len(preds), len(pred_labels))))
+
+    return pred_labels, pred_scores, pred_indices
+
 def run_model_pred(model, batch, model_name):
     if model_name == "text_only" or "_concat" in model_name:
         # Standard HuggingFace AutoModelForSequenceClassification

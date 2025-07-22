@@ -72,6 +72,7 @@ def run_eval(args):
         seed=seed,
         distributed=False,      
         model_name=model_name,
+        inference_only=inference_mode,
     )
 
     print("Test set size: ", len(test_loader))

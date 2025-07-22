@@ -10,23 +10,37 @@ def get_dataloads(
     data_path, size="small", validation=False, test_size=0.2,
     tokenizer_name="camembert-base", batch_size=8, seed=42,
     distributed=False, rank=None, world_size=None,
-    model_name="text_only"  # options: text_only, post_text_concat, post_text_embed
+    model_name="text_only",  # options: text_only, post_text_concat, post_text_embed
+    inference_only=False
 ):
     
     print(f"Loading dataset from {data_path}, size is {size}, validation is {validation}, test size is {test_size}...")
     
     df = pd.read_csv(data_path, low_memory=False)
     
-    if "stop" not in df.columns or "text" not in df.columns:
-        raise ValueError("CSV must contain 'stop' and 'text' columns.")
-    if "account_name" not in df.columns:
-        raise ValueError("CSV must contain 'account_name' column for community-based model_name options.")
-    if "page_group_type" not in df.columns:
-        raise ValueError("CSV must contain 'page_group_type' column for community-based model_name options.")
-    if model_name in {"post_text_concat", "post_text_embed"} and "share_title" not in df.columns:
-        raise ValueError("CSV must contain 'post_title' column for this model_name.")
+    if "text" not in df.columns:
+        raise ValueError("CSV must contain 'text' columns.")
     
-    df['labels'] = df['stop'].apply(lambda x: 0 if x == 'no_stop' else 1)
+    if inference_only:
+        df['labels'] = -1
+    else: # eval mode should have labels, i.e. 'stop' column   
+        if "stop" not in df.columns:
+            raise ValueError("CSV must contain 'stop' columns.")
+        df['labels'] = df['stop'].apply(lambda x: 0 if x == 'no_stop' else 1)
+
+    if "account_name" not in df.columns:
+        raise ValueError("CSV must contain 'account_name' column for this model_name.")
+    if "type" in model_name and "page_group_type" not in df.columns:
+        raise ValueError("CSV must contain 'page_group_type' column for this model_name.")
+    if "post" in model_name and "share_title" not in df.columns:
+        raise ValueError("CSV must contain 'post_title' column for this model_name.")
+    if "domain" in model_name and "parent_domain" not in df.columns:
+        raise ValueError("CSV must contain 'parent_domain' column for this model_name.")
+    if "source" in model_name and "source_type" not in df.columns:
+        raise ValueError("CSV must contain 'source_type' column for this model_name.")
+    if "theme" in model_name and "theme" not in df.columns:
+        raise ValueError("CSV must contain 'theme' column for this model_name.")
+    
     df['index'] = range(1, len(df) + 1)
 
     # clean string fields and fill Nan with empty string

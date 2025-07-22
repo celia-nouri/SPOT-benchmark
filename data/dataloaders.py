@@ -20,6 +20,7 @@ def get_dataloads(
     
     if "text" not in df.columns:
         raise ValueError("CSV must contain 'text' columns.")
+    df["text"] = df["text"].fillna("").astype(str)
     
     if inference_only:
         df['labels'] = -1
@@ -28,31 +29,32 @@ def get_dataloads(
             raise ValueError("CSV must contain 'stop' columns.")
         df['labels'] = df['stop'].apply(lambda x: 0 if x == 'no_stop' else 1)
 
-    if "account_name" not in df.columns:
-        raise ValueError("CSV must contain 'account_name' column for this model_name.")
-    if "type" in model_name and "page_group_type" not in df.columns:
-        raise ValueError("CSV must contain 'page_group_type' column for this model_name.")
-    if "post" in model_name and "share_title" not in df.columns:
-        raise ValueError("CSV must contain 'post_title' column for this model_name.")
-    if "domain" in model_name and "parent_domain" not in df.columns:
-        raise ValueError("CSV must contain 'parent_domain' column for this model_name.")
-    if "source" in model_name and "source_type" not in df.columns:
-        raise ValueError("CSV must contain 'source_type' column for this model_name.")
-    if "theme" in model_name and "theme" not in df.columns:
-        raise ValueError("CSV must contain 'theme' column for this model_name.")
+    if "com" in model_name:
+        if "account_name" not in df.columns:
+            raise ValueError("CSV must contain 'account_name' column for this model_name.")
+        df["account_name"] = df["account_name"].fillna("").astype(str)
+    if "type" in model_name:
+        if "page_group_type" not in df.columns:
+            raise ValueError("CSV must contain 'page_group_type' column for this model_name.")
+        df["page_group_type"] = df["page_group_type"].fillna("").astype(str)
+    if "post" in model_name: 
+        if "share_title" not in df.columns:
+            raise ValueError("CSV must contain 'post_title' column for this model_name.")
+        df["share_title"] = df["share_title"].fillna("").astype(str)
+    if "domain" in model_name:
+        if "parent_domain" not in df.columns:
+            raise ValueError("CSV must contain 'parent_domain' column for this model_name.")
+        df["parent_domain"] = df["parent_domain"].fillna("").astype(str)
+    if "source" in model_name:
+        if "source_type" not in df.columns:
+            raise ValueError("CSV must contain 'source_type' column for this model_name.")
+        df["source_type"] = df["source_type"].fillna("").astype(str)
+    if "theme" in model_name:
+        if "theme" not in df.columns:
+            raise ValueError("CSV must contain 'theme' column for this model_name.")
+        df["theme"] = df["theme"].fillna("").astype(str)
     
     df['index'] = range(1, len(df) + 1)
-
-    # clean string fields and fill Nan with empty string
-    df["share_title"] = df["share_title"].fillna("").astype(str)
-    df["text"] = df["text"].fillna("").astype(str)
-    df["account_name"] = df["account_name"].fillna("").astype(str)
-    df["page_group_type"] = df["page_group_type"].fillna("").astype(str)
-
-    df["parent_domain"] = df["parent_domain"].fillna("").astype(str)
-    df["source_type"] = df["source_type"].fillna("").astype(str)
-    df["theme"] = df["theme"].fillna("").astype(str)
-
 
     if size == "small":
         df = df.sample(n=100, random_state=seed)

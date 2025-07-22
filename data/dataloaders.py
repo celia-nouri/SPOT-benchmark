@@ -64,12 +64,16 @@ def get_dataloads(
         pass
     else:
         raise ValueError("Size must be one of: small, medium, large")
-
-    train_df, test_df = train_test_split(df, test_size=test_size, stratify=df['labels'], random_state=seed)
-    if validation:
-        train_df, val_df = train_test_split(train_df, test_size=0.2, stratify=train_df['labels'], random_state=seed)
     
-    class_counts = train_df['labels'].value_counts(sort=False).tolist()
+    if inference_only and test_size == 1.0:
+        test_df = df.copy()
+        train_df = pd.DataFrame(columns=df.columns)
+        val_df = pd.DataFrame(columns=df.columns)
+    else:
+        train_df, test_df = train_test_split(df, test_size=test_size, stratify=df['labels'], random_state=seed)
+        if validation:
+            train_df, val_df = train_test_split(train_df, test_size=0.2, stratify=train_df['labels'], random_state=seed)
+
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
     def tokenize_text_only(batch):
@@ -232,7 +236,7 @@ def get_dataloads(
         cols = ['text', 'share_title', 'labels', 'index']
         tok_func = tokenize_dual
 
-    train_dataset, val_dataset = None, None
+    train_dataset, test_dataset, val_dataset = None, None, None
     class_counts = []
 
     # Convert to HuggingFace Datasets
@@ -240,6 +244,7 @@ def get_dataloads(
         train_dataset = Dataset.from_pandas(train_df[cols]).map(
             tok_func, batched=True
             )
+        class_counts = train_df['labels'].value_counts(sort=False).tolist()
         
     if not test_df.empty:
         test_dataset = Dataset.from_pandas(test_df[cols]).map(

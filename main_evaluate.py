@@ -115,12 +115,17 @@ def run_eval(args):
         print("Running inference ...")
         pred_labels, pred_scores, pred_indices = inference_model(model, test_loader, model_name, device, threshold=args.threshold)
 
+
+
         # Read the original dataframe to preserve other columns
         df = pd.read_csv(args.data_path)
         df = df.reset_index(drop=True)
-        df["pred_label"] = pd.Series(pred_labels, index=pred_indices)
-        df["pred_score"] = pd.Series(pred_scores, index=pred_indices)
-        df = df.sort_index()
+        # Ensure 'index' column exists and aligns with DataLoader
+        df["index"] = range(len(df))
+
+        # Write predictions back using stored indices
+        df.loc[pred_indices, "pred_label"] = pred_labels
+        df.loc[pred_indices, "pred_score"] = pred_scores
 
         # Write output
         if args.output_csv:

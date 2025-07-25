@@ -22,7 +22,7 @@ def get_dataloads(
         raise ValueError("CSV must contain 'text' columns.")
     df["text"] = df["text"].fillna("").astype(str)
     
-    if inference_only:
+    if False: #inference_only:
         df['labels'] = -1
     else: # eval mode should have labels, i.e. 'stop' column   
         if "stop" not in df.columns:
@@ -53,9 +53,10 @@ def get_dataloads(
         if "theme" not in df.columns:
             raise ValueError("CSV must contain 'theme' column for this model_name.")
         df["theme"] = df["theme"].fillna("").astype(str)
-    
-    df['index'] = range(1, len(df) + 1)
 
+    # create the index column, start with 0
+    df["index"] = range(len(df))
+    
     if size == "small":
         df = df.sample(n=100, random_state=seed)
     elif size == "medium":

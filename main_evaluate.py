@@ -4,7 +4,8 @@ import numpy as np
 import os
 import pandas as pd
 import random
-from transformers import AdamW
+from torch.optim import AdamW
+from transformers import AutoTokenizer
 from transformers import set_seed
 import torch
 import torch.nn.functional as F
@@ -42,6 +43,7 @@ def run_eval(args):
     loss_mino_class_weight = args.loss_minority_class_weight
     checkpoint_path = args.checkpoint_path
     inference_mode = args.inference_only
+    tokenize = args.tokenize
 
     assert validation in [True, False], "Invalid validation setting: {}".format(validation)
     assert model_name in all_model_names, "Invalid model name: {}".format(model_name)
@@ -73,6 +75,7 @@ def run_eval(args):
         distributed=False,      
         model_name=model_name,
         inference_only=inference_mode,
+        tokenize=tokenize
     )
 
     print("Test set size: ", len(test_loader))
@@ -90,32 +93,30 @@ def run_eval(args):
     else:
         criterion = get_criterion(device=device, balanced=False, class_weights=class_weights)
 
-
     # Instantiate the model
-    model = get_model(args).to(device)
-
-    print("checkpoint_path:", checkpoint_path, type(checkpoint_path))
-
-
-    # Load your checkpoint (adjust path as needed)
-    state_dict = torch.load(checkpoint_path, map_location="cpu")
-
-    # If saved with DataParallel, keys will start with "module."
-    # Create a new dict without "module." prefix
-    new_state_dict = {}
-    for key, value in state_dict.items():
-        new_key = key.replace("module.", "") if key.startswith("module.") else key
-        new_state_dict[new_key] = value
-
-    # Now load the fixed state dict into your model
-    model.load_state_dict(new_state_dict, strict=False)
+    model = get_model(args)
+    tokenizer = None
+    if "llama" in model_name:
+        tokenizer = AutoTokenizer.from_pretrained(pretrained_model)
+        tokenizer.pad_token = tokenizer.eos_token  # important for batching
+    else:
+        model = model.to(device)
+        print("checkpoint_path:", checkpoint_path, type(checkpoint_path))
+        # Load your checkpoint (adjust path as needed)
+        state_dict = torch.load(checkpoint_path, map_location="cpu")
+        # If saved with DataParallel, keys will start with "module."
+        # Create a new dict without "module." prefix
+        new_state_dict = {}
+        for key, value in state_dict.items():
+            new_key = key.replace("module.", "") if key.startswith("module.") else key
+            new_state_dict[new_key] = value
+        # Now load the fixed state dict into your model
+        model.load_state_dict(new_state_dict, strict=False)
     model.eval()
 
     if inference_mode:
         print("Running inference ...")
-        pred_labels, pred_scores, pred_indices = inference_model(model, test_loader, model_name, device, threshold=args.threshold)
-
-
+        pred_labels, pred_scores, pred_indices = inference_model(model, test_loader, model_name, device, threshold=args.threshold, tokenizer=tokenizer)
 
         # Read the original dataframe to preserve other columns
         df = pd.read_csv(args.data_path)
@@ -136,7 +137,7 @@ def run_eval(args):
         
     else: # Evaluation
         print("Running evaluation ...")
-        test_loss, test_accuracy, test_f1, test_precision, test_recall, selected_threshold = evaluate_model(model, test_loader, model_name, device, f"{model_name}_{size}_test_outputs.tsv", tune_threshold=False, best_threshold=args.threshold, criterion=criterion)
+        test_loss, test_accuracy, test_f1, test_precision, test_recall, selected_threshold = evaluate_model(model, test_loader, model_name, device, f"{model_name}_{size}_test_outputs.tsv", tune_threshold=False, best_threshold=args.threshold, criterion=criterion, tokenizer=tokenizer)
 
         assert selected_threshold == args.threshold 
 
@@ -167,11 +168,13 @@ def parse_args(parser):
     parser.add_argument("--output_dir", type=str, default="./camembertv2_results")
     parser.add_argument('--size', type=str, default='large', help='the size of the dataset, can take one of the following values: ["small", "medium", "large", "small-1000", "cad"]')
     parser.add_argument('--validation', type=bool, default=True, help='rather or not to use a validation set for model tuning')
+    parser.add_argument('--tokenize', type=bool, default=True, help='rather or not to tokenize the texts before calling the model')
+
     parser.add_argument("--loss-minority-class-weight", type=float, default=-1, help='cross entropy loss weight applied to the minority class, if negative, then the class weight is computed using the train set class distribution')
 
     # Model args
-    parser.add_argument("--model-name", type=str, default="text_only", help='the model to use, can take one of the following values: ' + models_string)
-    parser.add_argument('--pretrained-model-name', type=str, default="almanach/camembert-base", help='name for pretrained text model to use to generate text embeddings, can take one of the following values: ' + pretrained_model_string)
+    parser.add_argument("--model-name", type=str, default="llama-3-7b", help='the model to use, can take one of the following values: ' + models_string)
+    parser.add_argument('--pretrained-model-name', type=str, default="meta-llama/Llama-2-7b-hf", help='name for pretrained text model to use to generate text embeddings, can take one of the following values: ' + pretrained_model_string)
     parser.add_argument("--attention-probs-dropout-prob", type=float, metavar="D", default=0.3, help="dropout probability for attention weights")
     parser.add_argument("--hidden-dropout-prob", type=float, metavar="D", default=0.3, help="dropout probability after hidden layer")
     parser.add_argument("--loss", type=str, default="crossentropy", help='loss can be: focal, crossentropy ...')

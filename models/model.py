@@ -4,9 +4,22 @@ from torch_geometric.nn import RGCNConv, GraphConv, GATConv, to_hetero
 from torch_geometric.data import Data, HeteroData
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AutoModel, DistilBertModel, RobertaModel, AutoModelForSequenceClassification, AutoTokenizer, AutoConfig, PretrainedConfig
-from utils.construct_graph import get_graph, get_hetero_graph
+from transformers import (
+    AutoConfig,
+    AutoModel,
+    AutoModelForSequenceClassification,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    DistilBertModel,
+    LlamaForSequenceClassification,
+    LlamaForCausalLM,
+    LlamaTokenizer,
+    PretrainedConfig,
+    RobertaModel
+)
+#from llama_cpp import Llama
 
+from utils.construct_graph import get_graph, get_hetero_graph
 
 
 all_model_names = [
@@ -21,9 +34,10 @@ all_model_names = [
     "theme_text_concat", # Text classifier over the theme [SEP] comment text
     "domain_source_text_concat", # Text classifier over the domain name source type [SEP] comment text
     "domain_theme_text_concat", # Text classifier over the domain name theme [SEP] comment text
-    "post_text_embed" # Generates embeddings for the comment text and post title, combine them with a FC layer, then classify
+    "post_text_embed", # Generates embeddings for the comment text and post title, combine them with a FC layer, then classify
+    "llama",
+    "llama_cpp"
     ]
-
     
 all_base_pretrained_models = [
     "bert-base-uncased",        # BERT (English, uncased)
@@ -34,7 +48,10 @@ all_base_pretrained_models = [
     "answerdotai/ModernBERT-base",  # Modern-BERT (English)
     "answerdotai/ModernBERT-large", # Modern-BERT (English)
     "almanach/camembertv2-base", # CamemBERT v2 (French)
-    "almanach/camembert-base" # CamemBERT v1 (French)
+    "almanach/camembert-base", # CamemBERT v1 (French)
+    "meta-llama/Llama-3.2-1B",
+    "meta-llama/Llama-3.2-3B-Instruct",
+    "meta-llama/Llama-3.3-70B-Instruct"
 ]
 
 # DistilBERT Classifier model 
@@ -1016,7 +1033,22 @@ def get_model(args):
             attention_probs_dropout_prob=args.attention_probs_dropout_prob
         )
 
-
+    elif "llama" in model_name:
+        # 2️⃣ 4-bit quantization config (saves memory & disk)
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16
+        )
+        model = LlamaForCausalLM.from_pretrained(
+            pretrained_model_name,
+            device_map="auto",       # automatically shards across all available GPUs
+            quantization_config=bnb_config,
+            offload_folder="/tmp/llama_offload",
+            torch_dtype=torch.bfloat16,  # low memory dtype
+        )
+    
     '''
     elif model_name == "simple-graph":
         model = SimpleGraphModel(in_channels=768, hidden_channels=hidden_channels, num_heads=num_heads)
@@ -1057,7 +1089,8 @@ def get_model(args):
     if model_name != "hetero-graph":
         model = model.to(device)
     '''
-    model = model.to(device)
+    if "llama" not in model_name:
+        model = model.to(device)
     return model
 
 

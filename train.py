@@ -3,7 +3,7 @@ import json
 import numpy as np
 import os
 import random
-from transformers import AdamW
+from torch.optim import AdamW
 from transformers import set_seed
 import torch
 import torch.nn.functional as F

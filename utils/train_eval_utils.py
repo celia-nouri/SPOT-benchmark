@@ -106,7 +106,7 @@ def to_serializable_list(data):
         return data  # assume already serializable
 
 
-def evaluate_model(model, loader, model_name, device, output_file="", tune_threshold=True, best_threshold=0.5, criterion=None):
+def evaluate_model(model, loader, model_name, device, output_file="", tune_threshold=True, best_threshold=0.5, criterion=None, tokenizer=None):
     model.eval()
     thresholds = np.arange(0.1, 1.0, 0.1) if tune_threshold else [best_threshold]
     best_f1 = 0.0
@@ -134,8 +134,9 @@ def evaluate_model(model, loader, model_name, device, output_file="", tune_thres
             indices_list = []
 
             for batch in loader:
-                batch = {k: v.to(device) for k, v in batch.items()}
-                outputs = run_model_pred(model, batch, model_name)
+                if "llama" not in model_name:
+                    batch = {k: v.to(device) for k, v in batch.items()}
+                outputs = run_model_pred(model, batch, model_name, tokenizer=tokenizer)
                 logits = outputs.logits
                 labels = batch["labels"]
 
@@ -207,7 +208,7 @@ def evaluate_model(model, loader, model_name, device, output_file="", tune_thres
     )
 
 
-def inference_model(model, loader, model_name, device, threshold=0.5):
+def inference_model(model, loader, model_name, device, threshold=0.5, tokenizer=None):
     """
     Run inference on a dataloader without computing metrics.
     
@@ -228,11 +229,15 @@ def inference_model(model, loader, model_name, device, threshold=0.5):
     pred_scores = []
     pred_indices = []
 
+    device = model.device  # first device of the model shard
+
     with torch.no_grad():
         for batch in tqdm(loader, desc="Running inference"):
+            #if "llama" not in model_name:
             batch = {k: v.to(device) for k, v in batch.items()}
-            outputs = run_model_pred(model, batch, model_name)
+            outputs = run_model_pred(model, batch, model_name, tokenizer=tokenizer)
             logits = outputs.logits
+            print(f"logits {logits}")
 
             probs = F.softmax(logits, dim=1)
             scores = probs[:, 1]  # Probability of class 1
@@ -249,7 +254,7 @@ def inference_model(model, loader, model_name, device, threshold=0.5):
 
     return pred_labels, pred_scores, pred_indices
 
-def run_model_pred(model, batch, model_name):
+def run_model_pred(model, batch, model_name, tokenizer=None):
     if model_name == "text_only" or "_concat" in model_name:
         # Standard HuggingFace AutoModelForSequenceClassification
         outputs = model(
@@ -263,6 +268,16 @@ def run_model_pred(model, batch, model_name):
         # BERTContextEmb returns raw logits → wrap to mimic HuggingFace output
         logits = model(batch)
         return SimpleNamespace(logits=logits)  # makes it compatible with outputs.logits
+
+    elif "llama" in model_name:
+
+        outputs = model.generate(input_ids=batch["input_ids"], attention_mask=batch.get("attention_mask", None), max_new_tokens=5)
+        decoded = [tokenizer.decode(out, skip_special_tokens=True) for out in outputs]
+        print(f"decoded {decoded}")
+        # Parse to binary labels (simple rule)
+        preds = [1 if "YES" in d.upper() else 0 for d in decoded]
+
+        return SimpleNamespace(logits=preds)
 
     else:
         raise ValueError(f"Unknown model name: {model_name}")

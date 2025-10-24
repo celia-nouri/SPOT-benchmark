@@ -119,7 +119,6 @@ def run_experiments(rank, world_size, args):
         args.test_size,
         tokenizer_name=pretrained_model,
         batch_size=args.batch_size,
-        seed=seed,
         distributed=True,      
         rank=rank,
         world_size=world_size,

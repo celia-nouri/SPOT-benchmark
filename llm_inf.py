@@ -2,6 +2,10 @@ import os
 os.environ["VLLM_USE_FLEX_ATTENTION"] = "0"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
+# Use your API key from environment variable for security
+os.environ["OPENAI_API_KEY"] = "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"
+
+from openai import OpenAI
 import pandas as pd
 from vllm import LLM, SamplingParams
 from tqdm import tqdm
@@ -17,6 +21,28 @@ def load_prompt(prompt_file):
     with open(prompt_file, "r", encoding="utf-8") as f:
         return f.read()
 
+# ---------------------------
+# Truncate context prompts
+# ---------------------------
+
+LIMITS = {
+    "text": 300,
+    "title": 200,
+    "url_title": 200,
+    "description": 200,
+    "parent_comment": 300,
+    "account": 50,
+    "domain": 50,
+}
+
+def truncate(text, key):
+    limit = LIMITS.get(key, 150)
+    if not isinstance(text, str):
+        text = ""
+    if len(str(text)) <= limit :
+        return text
+    return str(text)[:limit]
+
 
 # ---------------------------
 # Inference Function
@@ -28,12 +54,35 @@ def classify_batch(prompts, llm, sampling_params):
     truncated_prompts = []
     for p in prompts:
         if len(p) > max_len:
+            print(f"/!\ NEED TO TRUNCATE THE PROMPT, length {len(p)}")
             truncated_prompts.append(p[:max_len])
         else:
+            print(f"prompt length {len(p)}")
             truncated_prompts.append(p)
 
     outputs = llm.generate(truncated_prompts, sampling_params)
     return [out.outputs[0].text.strip() for out in outputs]
+
+def classify_batch_openai(client, prompts, model_name, temperature=0.0, max_tokens=5):
+    responses = []
+    for prompt in prompts:
+        # Truncate long prompts if needed (OpenAI models support up to ~128k for gpt-4o)
+        if len(prompt) > 120000:
+            print(f"/!\\ Truncating long prompt, length {len(prompt)}")
+            prompt = prompt[:120000]
+
+        # Create chat completion
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": "You are a helpful text classification assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        responses.append(response.choices[0].message.content.strip())
+    return responses
 
 
 # ---------------------------
@@ -41,6 +90,10 @@ def classify_batch(prompts, llm, sampling_params):
 # ---------------------------
 def run_inference(df, model_name, llm, sampling_params, prompt_file, batch_size=8):
     results = []
+    client = None
+    if "openai" in model_name or "gpt" in model_name:
+        client = OpenAI()
+
     PROMPT_TEMPLATE = load_prompt(prompt_file)
     print(f"Using PROMPT_TEMPLATE: {PROMPT_TEMPLATE}\n")
     if "mistral" in model_name.lower():
@@ -49,16 +102,18 @@ def run_inference(df, model_name, llm, sampling_params, prompt_file, batch_size=
          PROMPT_TEMPLATE =  "[INST] " + PROMPT_TEMPLATE + " [/INST]"
     for i in tqdm(range(0, len(df), batch_size), desc="Running inference"):
         batch_texts = df["text"].iloc[i:i+batch_size].tolist()
-        if "text_context" in prompt_file:
+        if "context" in prompt_file:
             batch_posts = df["post_message"].iloc[i:i+batch_size].tolist()
             batch_descriptions = df["post_description"].iloc[i:i+batch_size].tolist()
             batch_parents = df["parent_text"].iloc[i:i+batch_size].tolist()
             batch_url_titles = df["post_title"].iloc[i:i+batch_size].tolist()
+            batch_account_name = df["account_name"].iloc[i:i+batch_size].tolist()
+            batch_domain = df["parent_domain"].iloc[i:i+batch_size].tolist()
             batch_prompts = [
-                PROMPT_TEMPLATE.format(text=t, title=p, url_title=u, description=d,parent_comment=c)
-                for t, p, u, d, c in zip(batch_texts, batch_posts, batch_url_titles, batch_descriptions, batch_parents)
+                PROMPT_TEMPLATE.format(text=truncate(t, "text"), title=truncate(title, "title"), url_title=truncate(u, "url_title"), description=truncate(desc, "description"), parent_comment=truncate(p, "parent_comment"), account=truncate(a, "account"), domain=truncate(dom, "domain"))
+                for t, title, u, desc, p, a, dom in zip(batch_texts, batch_posts, batch_url_titles, batch_descriptions, batch_parents, batch_account_name, batch_domain)
             ]
-        elif "context" in prompt_file:
+        elif "url" in prompt_file:
             batch_urls = df["post_url"].iloc[i:i+batch_size].tolist()
             batch_prompts = [
                 PROMPT_TEMPLATE.format(text=t, url=u)
@@ -67,81 +122,145 @@ def run_inference(df, model_name, llm, sampling_params, prompt_file, batch_size=
         else:
             batch_prompts = [PROMPT_TEMPLATE.format(text=t) for t in batch_texts]
         print(f"BATCH TEXTS: {batch_texts}")
-        preds = classify_batch(batch_prompts, llm, sampling_params)
+        preds = []
+        if "openai" in model_name or "gpt" in model_name:
+            preds = classify_batch_openai(client, batch_prompts, model_name)
+        else:
+            preds = classify_batch(batch_prompts, llm, sampling_params)
         print(f"PREDS: {preds}")
         results.extend(preds)
     return results
 
-def normalize_label(pred: str) -> int:
-    """Convert raw model output to {0,1,-1}."""
-    if pred.startswith("1"):
-        return 1
-    elif pred.startswith("0"):
-        return 0
-    else:
+def normalize_label(pred: str, prompt_file: str) -> int:
+    """Convert raw model output to {1,0,-1}."""
+    if not isinstance(pred, str):
         return -1
+
+    p = pred.strip().lower()  # normalize once
+
+    if "_yn" in prompt_file:  # Yes/No prompts
+        if p.startswith("yes"):
+            return 1
+        elif p.startswith("no"):
+            return 0
+        else:
+            return -1
+
+    elif "_stop" in prompt_file:  # Stop/Neutral prompts
+        if p.startswith("stop"):
+            return 1
+        elif p.startswith("neutr"):
+            return 0
+        else:
+            return -1  
+
+    elif "_ouinon" in prompt_file:  # oui/non prompts
+        if "oui" in p and "non" in p:
+            return -1
+        if "oui" in p:
+            return 1
+        elif "non" in p:
+            return 0
+        else:
+            return -1  
+        
+    elif "_critique" in prompt_file:  # oui/non prompts
+        if p.startswith("criti"):
+            return 1
+        elif p.startswith("neutr"):
+            return 0
+        else:
+            return -1  
+
+    else:  # 0/1 prompts
+        if p.startswith("1"):
+            return 1
+        elif p.startswith("0"):
+            return 0
+        else:
+            return -1
+
 
 # ---------------------------
 # Call function
 # ---------------------------
 def run_llm(args):
     print(f"Opening data path: {args.data_path}")
+    model_name = args.model_name
+    print(f"Model name is: {model_name}")
    
     #df = pd.read_csv(args.data_path, low_memory=False)
+    sep = ";"
+    if 'testset_all_data' in args.data_path:
+        sep = ","
 
-    df = pd.read_csv(args.data_path, sep=';', low_memory=False, quotechar='"')
-
-    
+    df = pd.read_csv(args.data_path, sep=sep, low_memory=False, quotechar='"')
+  
     if "text" not in df.columns:
         raise ValueError("CSV must contain 'text' columns.")
     df["text"] = df["text"].fillna("").astype(str)
+    predictions = []
 
-    # vLLM sampling parameters
-    sampling_params = SamplingParams(
-        temperature=0.0,  # deterministic outputs
-        max_tokens=5,
-    )
+    if "gpt" in model_name or "openai" in model_name:
+            # Example eval dataframe
+        #eval_df = pd.DataFrame({
+        #    "text": [
+        #        "C’est complètement faux, fake news !",
+        #        "Merci pour l’info 👍",
+        #        "Photoshop raté, montage mal fait."
+        #    ]
+        #})
+        # Run inference using OpenAI API
+        predictions = run_inference(
+            df,
+            model_name=args.model_name,  # e.g., "gpt-4o-mini"
+            llm=None, 
+            sampling_params=None,
+            prompt_file=args.prompt_file,
+            batch_size=args.batch_size,
+        )
+    else :
 
-    # ---------------------------
-    # Load Model
-    # ---------------------------
-    model_name = args.model_name
-    config = AutoConfig.from_pretrained(model_name)
+        # vLLM sampling parameters
+        sampling_params = SamplingParams(
+            temperature=0.0,  # deterministic outputs
+            max_tokens=5,
+        )
 
-    # Determine max context length from config (fallback = 8192)
-    #max_len = getattr(config, "max_position_embeddings", 8192)
+        # ---------------------------
+        # Load Model
+        # ---------------------------
+        #config = AutoConfig.from_pretrained(model_name)
 
-    tokenizer_mode = "auto"
-    if "mistral" in model_name.lower():
-        tokenizer_mode = "mistral"
+        # Determine max context length from config (fallback = 8192)
+        #max_len = getattr(config, "max_position_embeddings", 8192)
 
-    # Precision → "auto" lets vLLM decide based on GPU (half precision if supported)
-    dtype = "auto"
+        # Precision → "auto" lets vLLM decide based on GPU (half precision if supported)
+        dtype = "auto"
 
-    print(f"Loading {model_name} with max_len=2048, dtype={dtype}, tokenizer_mode={tokenizer_mode}")
+        print(f"Loading {model_name} with max_len=2048, dtype={dtype}")
 
-    llm = LLM(
-        model=model_name,
-        tokenizer_mode='auto',
-        dtype='float16',
-        max_model_len=2048,
-        tensor_parallel_size=2, 
-        trust_remote_code=True,
-        gpu_memory_utilization=0.85,  # (optional) squeeze more memory
-    )
+        gpu_mem_use = 0.75
+        if "llama" in model_name.lower():
+            gpu_mem_use = 0.75
+        if "qwen" in model_name.lower():
+            gpu_mem_use = 0.85
 
-    # Example eval dataframe
-#    eval_df = pd.DataFrame({
-#        "text": [
-#            "C’est complètement faux, fake news !",
-#            "Merci pour l’info 👍",
-#            "Photoshop raté, montage mal fait."
-#        ]
-#    })
+        llm = LLM(
+            model=model_name,
+            tokenizer_mode='auto',
+            dtype='float16',
+            max_model_len=4096,
+            tensor_parallel_size=args.num_gpu, 
+            trust_remote_code=True,
+            gpu_memory_utilization=gpu_mem_use,  # (optional) squeeze more memory
+        )
 
-    predictions = run_inference(df, args.model_name, llm, sampling_params, args.prompt_file, args.batch_size)
+    
+        predictions = run_inference(df, args.model_name, llm, sampling_params, args.prompt_file, args.batch_size)
 
-    df["predicted_label"] = [normalize_label(p) for p in predictions]
+    df["predicted_label"] = [normalize_label(p, args.prompt_file) for p in predictions]
+    df["llm_output"] = predictions
 
     print(df)
     # Save if needed
@@ -162,11 +281,14 @@ def parse_args(parser):
     # mistralai/Mistral-7B-Instruct-v0.2
     # meta-llama/Llama-3.2-3B-Instruct
     # Qwen/Qwen2.5-7B-Instruct
+    # openai/gpt-oss-20b
   
     # Hyper params
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--test-size", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--num-gpu", type=int, default=1)
+
 
     # Inference argument
     parser.add_argument('--inference-only', action='store_true', help='Run inference only and write predictions to CSV')

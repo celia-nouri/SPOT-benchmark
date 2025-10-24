@@ -1,16 +1,15 @@
+import argparse
 import os
 os.environ["VLLM_USE_FLEX_ATTENTION"] = "0"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
 # Use your API key from environment variable for security
-os.environ["OPENAI_API_KEY"] = "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"
+os.environ["OPENAI_API_KEY"] = 'Add your OpenAI API key here'
 
 from openai import OpenAI
 import pandas as pd
-from vllm import LLM, SamplingParams
 from tqdm import tqdm
 from transformers import AutoConfig
-import argparse
+from vllm import LLM, SamplingParams
 
 # ---------------------------
 # Load Prompt
@@ -54,10 +53,9 @@ def classify_batch(prompts, llm, sampling_params):
     truncated_prompts = []
     for p in prompts:
         if len(p) > max_len:
-            print(f"/!\ NEED TO TRUNCATE THE PROMPT, length {len(p)}")
+            print(f"/!\\ Truncating long prompt, length {len(p)}")
             truncated_prompts.append(p[:max_len])
         else:
-            print(f"prompt length {len(p)}")
             truncated_prompts.append(p)
 
     outputs = llm.generate(truncated_prompts, sampling_params)
@@ -202,15 +200,6 @@ def run_llm(args):
     predictions = []
 
     if "gpt" in model_name or "openai" in model_name:
-            # Example eval dataframe
-        #eval_df = pd.DataFrame({
-        #    "text": [
-        #        "C’est complètement faux, fake news !",
-        #        "Merci pour l’info 👍",
-        #        "Photoshop raté, montage mal fait."
-        #    ]
-        #})
-        # Run inference using OpenAI API
         predictions = run_inference(
             df,
             model_name=args.model_name,  # e.g., "gpt-4o-mini"
@@ -227,18 +216,8 @@ def run_llm(args):
             max_tokens=5,
         )
 
-        # ---------------------------
-        # Load Model
-        # ---------------------------
-        #config = AutoConfig.from_pretrained(model_name)
-
-        # Determine max context length from config (fallback = 8192)
-        #max_len = getattr(config, "max_position_embeddings", 8192)
-
-        # Precision → "auto" lets vLLM decide based on GPU (half precision if supported)
         dtype = "auto"
-
-        print(f"Loading {model_name} with max_len=2048, dtype={dtype}")
+        print(f"Loading {model_name}, dtype={dtype}")
 
         gpu_mem_use = 0.75
         if "llama" in model_name.lower():
@@ -256,7 +235,6 @@ def run_llm(args):
             gpu_memory_utilization=gpu_mem_use,  # (optional) squeeze more memory
         )
 
-    
         predictions = run_inference(df, args.model_name, llm, sampling_params, args.prompt_file, args.batch_size)
 
     df["predicted_label"] = [normalize_label(p, args.prompt_file) for p in predictions]
@@ -289,13 +267,11 @@ def parse_args(parser):
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-gpu", type=int, default=1)
 
-
     # Inference argument
     parser.add_argument('--inference-only', action='store_true', help='Run inference only and write predictions to CSV')
     parser.add_argument('--output_path', type=str, default="error_analysis_testset_qwen.csv", help='Path to save inference results (CSV with predicted scores and labels)')
     parser.add_argument("--prompt_file", type=str, default="models/prompts/prompt_llama.txt", help="Filename of the prompt template in prompts/")
     return parser.parse_args()
-
 
 # ---------------------------
 # Main call

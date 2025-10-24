@@ -1,13 +1,12 @@
+from datasets import Dataset
+import pandas as pd
 from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer, DataCollatorWithPadding
-from datasets import Dataset
-from torch.utils.data import DataLoader, DistributedSampler
 import torch
-import pandas as pd
+from torch.utils.data import DataLoader, DistributedSampler
+
 
 DATA_SPLIT_SEED = 42
-
-
 # Define context segment limits
 LIMITS = {
     "text": 600,
@@ -87,26 +86,10 @@ def get_dataloads(
         if "account_name" not in df.columns:
             raise ValueError("CSV must contain 'account_name' column for this model_name.")
         df["account_name"] = df["account_name"].fillna("").astype(str)
-    if "type" in model_name:
-        if "page_group_type" not in df.columns:
-            raise ValueError("CSV must contain 'page_group_type' column for this model_name.")
-        df["page_group_type"] = df["page_group_type"].fillna("").astype(str)
-    if "post" in model_name: #?
-        if "share_title" not in df.columns:
-            raise ValueError("CSV must contain 'share_title' column for this model_name.")
-        df["share_title"] = df["share_title"].fillna("").astype(str)
     if "domain" in model_name: #OK
         if "parent_domain" not in df.columns:
             raise ValueError("CSV must contain 'parent_domain' column for this model_name.")
         df["parent_domain"] = df["parent_domain"].fillna("").astype(str)
-    if "source" in model_name:
-        if "source_type" not in df.columns:
-            raise ValueError("CSV must contain 'source_type' column for this model_name.")
-        df["source_type"] = df["source_type"].fillna("").astype(str)
-    if "theme" in model_name:
-        if "theme" not in df.columns:
-            raise ValueError("CSV must contain 'theme' column for this model_name.")
-        df["theme"] = df["theme"].fillna("").astype(str)
 
     # create the index column, start with 0
     df["index"] = range(len(df))
@@ -128,15 +111,12 @@ def get_dataloads(
         train_df, test_df = train_test_split(df, test_size=test_size, stratify=df['labels'], random_state=seed)
         if validation:
             train_df, val_df = train_test_split(train_df, test_size=0.2, stratify=train_df['labels'], random_state=seed)
-    test_df.to_csv("data/testset-all-data.csv")
 
     train_dataset, test_dataset, val_dataset = None, None, None
     class_counts = []
     tokenizer = None
     if tokenize and tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-        if "llama" in model_name:
-            tokenizer.pad_token = tokenizer.eos_token  # important for batching
 
         def tokenize_text_only(batch):
             tokens = tokenizer(batch["text"], truncation=True, padding="max_length")
@@ -144,14 +124,6 @@ def get_dataloads(
             tokens["index"] = batch["index"]
             return tokens
 
-        def tokenize_post_concat(batch):
-            sep_token = tokenizer.sep_token or "[SEP]"
-            concat_text = [t + f" {sep_token} " + title for t, title in zip(batch["text"], batch["share_title"])]
-            tokens = tokenizer(concat_text, truncation=True, padding="max_length")
-            tokens["labels"] = batch["labels"]
-            tokens["index"] = batch["index"]
-            return tokens
-        
         def tokenize_article_concat(batch):
             sep_token = tokenizer.sep_token or "[SEP]"
             concat_text = [t + f" {sep_token} " + title + f" {sep_token} " + desc for t, title, desc in zip(batch["text"], batch["post_title"], batch["post_description"])]
@@ -186,12 +158,22 @@ def get_dataloads(
             tokens["labels"] = batch["labels"]
             tokens["index"] = batch["index"]
             return tokens
+
+        def tokenize_domain_concat(batch):
+            sep_token = tokenizer.sep_token or "[SEP]"
+            concat_text = [
+                f"{dom} {sep_token} {t}"
+                for dom, t in zip(batch["parent_domain"], batch["text"])
+            ]
+            tokens = tokenizer(concat_text, truncation=True, padding="max_length")
+            tokens["labels"] = batch["labels"]
+            tokens["index"] = batch["index"]
+            return tokens    
         
-        def tokenize_all_concat(batch):
+        def tokenize_all_concat(batch): # for ContextConcat
             sep = tokenizer.sep_token or "[SEP]"
             concat_texts = []
             #   ['text', 'parent_domain', 'account_name', 'post_title', 'post_description', 'post_message', 'parent_text', 'labels', 'index']
-
 
             for text, post_msg, title, desc, parent, account, domain in zip(
                 batch["text"],
@@ -243,127 +225,12 @@ def get_dataloads(
             tokens["index"] = batch["index"]
 
             return tokens
-
-        def tokenize_commu_type_concat(batch):
-            sep_token = tokenizer.sep_token or "[SEP]"
-            concat_text = [
-                f"{acc} {page_type} {sep_token} {t}"
-                for acc, page_type, t in zip(batch["account_name"], batch["page_group_type"], batch["text"])
-            ]
-            tokens = tokenizer(concat_text, truncation=True, padding="max_length")
-            tokens["labels"] = batch["labels"]
-            tokens["index"] = batch["index"]
-            return tokens
-        
-        def tokenize_commu_post_concat(batch):
-            sep_token = tokenizer.sep_token or "[SEP]"
-            concat_text = [
-                f"{acc} {sep_token} {t} {sep_token} {title}"
-                for acc, t, title in zip(batch["account_name"], batch["text"], batch["share_title"])
-            ]
-            tokens = tokenizer(concat_text, truncation=True, padding="max_length")
-            tokens["labels"] = batch["labels"]
-            tokens["index"] = batch["index"]
-            return tokens
-
-        def tokenize_commu_type_post_concat(batch):
-            sep_token = tokenizer.sep_token or "[SEP]"
-            concat_text = [
-                f"{acc} {page_type} {sep_token} {t} {sep_token} {title}"
-                for acc, page_type, t, title in zip(batch["account_name"], batch["page_group_type"], batch["text"], batch["share_title"])
-            ]
-            tokens = tokenizer(concat_text, truncation=True, padding="max_length")
-            tokens["labels"] = batch["labels"]
-            tokens["index"] = batch["index"]
-            return tokens
-
-        # source
-        def tokenize_domain_concat(batch):
-            sep_token = tokenizer.sep_token or "[SEP]"
-            concat_text = [
-                f"{dom} {sep_token} {t}"
-                for dom, t in zip(batch["parent_domain"], batch["text"])
-            ]
-            tokens = tokenizer(concat_text, truncation=True, padding="max_length")
-            tokens["labels"] = batch["labels"]
-            tokens["index"] = batch["index"]
-            return tokens    
-        def tokenize_source_concat(batch):
-            sep_token = tokenizer.sep_token or "[SEP]"
-            concat_text = [
-                f"{src} {sep_token} {t}"
-                for src, t in zip(batch["source_type"], batch["text"])
-            ]
-            tokens = tokenizer(concat_text, truncation=True, padding="max_length")
-            tokens["labels"] = batch["labels"]
-            tokens["index"] = batch["index"]
-            return tokens
-        def tokenize_theme_concat(batch):
-            sep_token = tokenizer.sep_token or "[SEP]"
-            concat_text = [
-                f"{thm} {sep_token} {t}"
-                for thm, t in zip(batch["theme"], batch["text"])
-            ]
-            tokens = tokenizer(concat_text, truncation=True, padding="max_length")
-            tokens["labels"] = batch["labels"]
-            tokens["index"] = batch["index"]
-            return tokens  
-        def tokenize_domain_source_concat(batch):
-            sep_token = tokenizer.sep_token or "[SEP]"
-            concat_text = [
-                f"{dom} {src} {sep_token} {t}"
-                for dom, src, t in zip(batch["parent_domain"], batch["source_type"], batch["text"])
-            ]
-            tokens = tokenizer(concat_text, truncation=True, padding="max_length")
-            tokens["labels"] = batch["labels"]
-            tokens["index"] = batch["index"]
-            return tokens
-        def tokenize_domain_theme_concat(batch):
-            sep_token = tokenizer.sep_token or "[SEP]"
-            concat_text = [
-                f"{dom} {thm} {sep_token} {t}"
-                for dom, thm, t in zip(batch["parent_domain"], batch["theme"], batch["text"])
-            ]
-            tokens = tokenizer(concat_text, truncation=True, padding="max_length")
-            tokens["labels"] = batch["labels"]
-            tokens["index"] = batch["index"]
-            return tokens
-        
-        def tokenize_llama_with_prompt(batch):
-
-            prompts = [f""" Vous êtes un annotateur. Votre tâche est de classifier un commentaire sur les réseaux sociaux comme un "Point d’Arrêt" (OUI) ou non (NON).
-
-    Instructions :
-    - Répondez uniquement OUI ou NON.
-    - Ne pas inclure d’explications ni de texte supplémentaire.
-    - Un point d’arrêt est un commentaire qui critique, corrige ou appelle à la vérification/action sur la crédibilité, la pertinence, la fiabilité de la source, la forme du contenu, l’auteur du post ou les autres utilisateurs.
-    - Répondez NON si le commentaire est neutre, conversationnel, humoristique sans critique ou hors sujet.
-
-    Exemples :
-    Commentaire : "C’est complètement faux ! / fake news"
-    Étiquette : OUI
-
-    Commentaire : "Je trouve ça intéressant"
-    Étiquette : NON
-
-    Commentaire : "{text}"
-    Étiquette : """
-                for text in batch["text"]
-            ]
-            tokens = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
-            tokens["labels"] = batch["labels"]
-            tokens["index"] = batch["index"]
-            return tokens
-
-
-        def tokenize_dual(batch):
-            print('TOKENIZE DUAL')
+ 
+        def tokenize_dual(batch): # for ContextEmbed
             output = {}
             sep_token = tokenizer.sep_token or "[SEP]"
             ctx_text = batch["text"]
-            if "share_title" in batch.keys():
-                ctx_text = batch["share_title"]
-            elif 'parent_domain' in batch.keys() and 'account_name' in batch.keys() and 'post_title' in batch.keys() and 'post_description' in batch.keys() and 'post_message' in batch.keys() and 'parent_text' in batch.keys():
+            if 'parent_domain' in batch.keys() and 'account_name' in batch.keys() and 'post_title' in batch.keys() and 'post_description' in batch.keys() and 'post_message' in batch.keys() and 'parent_text' in batch.keys():
                 concat_texts = []
                 #   ['text', 'parent_domain', 'account_name', 'post_title', 'post_description', 'post_message', 'parent_text', 'labels', 'index']
                 for post_msg, title, desc, parent, account, domain in zip(
@@ -410,8 +277,6 @@ def get_dataloads(
                 ctx_text = batch['post_message']
             elif 'parent_text' in batch.keys():
                 ctx_text = batch['parent_text']
-            
-            #print(ctx_text)
             
             text_tok = tokenizer(batch["text"], truncation=True, padding="max_length")
             ctx_tok = tokenizer(ctx_text, truncation=True, padding="max_length")
@@ -461,9 +326,6 @@ def get_dataloads(
         if model_name == "text_only":
             cols = ['text', 'labels', 'index']
             tok_func = tokenize_text_only
-        elif model_name == "text_post_concat":
-            cols = ['text', 'share_title', 'labels', 'index']
-            tok_func = tokenize_post_concat
         elif model_name == "parent_text_concat":
             cols = ['text', 'parent_text', 'labels', 'index']
             tok_func = tokenize_parent_concat
@@ -476,58 +338,22 @@ def get_dataloads(
         elif model_name == "com_text_concat":
             cols = ['text', 'account_name', 'labels', 'index']
             tok_func = tokenize_commu_concat
-        elif model_name == "com_text_post_concat":
-            cols = ['text', 'account_name', 'share_title', 'labels', 'index']
-            tok_func = tokenize_commu_post_concat
-        elif model_name == "com_type_text_concat":
-            cols = ['text', 'account_name', 'page_group_type', 'labels', 'index']
-            tok_func = tokenize_commu_type_concat
-        elif model_name == "com_type_text_post_concat":
-            cols = ['text', 'account_name', 'page_group_type', 'share_title', 'labels', 'index']
-            tok_func = tokenize_commu_type_post_concat
         elif model_name == "domain_text_concat":
             cols = ['text', 'parent_domain', 'labels', 'index']
             tok_func = tokenize_domain_concat
-        elif model_name == "source_text_concat":
-            cols = ['text', 'source_type', 'labels', 'index']
-            tok_func = tokenize_source_concat
-        elif model_name == "theme_text_concat":
-            cols = ['text', 'theme', 'labels', 'index']
-            tok_func = tokenize_theme_concat
-        elif model_name == "domain_source_text_concat":
-            cols = ['text', 'parent_domain', 'source_type', 'labels', 'index']
-            tok_func = tokenize_domain_source_concat
-        elif model_name == "domain_theme_text_concat":
-            cols = ['text', 'parent_domain', 'theme', 'labels', 'index']
-            tok_func = tokenize_domain_theme_concat
+        elif model_name == "parent_text_concat":
+            cols = ['text', 'parent_text', 'labels', 'index']
+            tok_func = tokenize_domain_concat
+        # all context models
+        elif model_name == "context_all_text_embed":
+            cols = ['text', 'parent_domain', 'account_name', 'post_title', 'post_description', 'post_message', 'parent_text', 'labels', 'index']
+            tok_func = tokenize_dual
         elif model_name == "context_all_text_concat":
             cols = ['text', 'parent_domain', 'account_name', 'post_title', 'post_description', 'post_message', 'parent_text', 'labels', 'index']
             tok_func = tokenize_all_concat
         elif model_name == "context_all_embed":
             cols = ['text', 'parent_domain', 'account_name', 'post_title', 'post_description', 'post_message', 'parent_text', 'labels', 'index']
             tok_func = tokenize_four
-        elif "llama" in model_name:
-            cols = ['text', 'labels', 'index']
-            tok_func = tokenize_llama_with_prompt
-        elif model_name == "post_text_embed":
-            cols = ['text', 'share_title', 'labels', 'index']
-            tok_func = tokenize_dual
-        elif model_name == "parent_text_embed":
-            cols = ['text', 'parent_text', 'labels', 'index']
-            tok_func = tokenize_parent_concat
-        elif model_name == "article_text_embed":
-            cols = ['text', 'post_title', 'post_description', 'labels', 'index']
-            tok_func = tokenize_article_concat
-        elif model_name == "message_text_embed":
-            cols = ['text', 'post_message', 'labels', 'index']
-            tok_func = tokenize_message_concat
-        elif model_name == "com_text_embed":
-            cols = ['text', 'account_name', 'labels', 'index']
-        elif model_name == "domain_text_embed":
-            cols = ['text', 'parent_domain', 'labels', 'index']
-        elif model_name == "context_all_text_embed":
-            cols = ['text', 'parent_domain', 'account_name', 'post_title', 'post_description', 'post_message', 'parent_text', 'labels', 'index']
-            tok_func = tokenize_dual
         else :
             cols = ['text', 'labels', 'index']
 
@@ -560,7 +386,7 @@ def get_dataloads(
                 "parent_input_ids", "parent_attention_mask",
                 "labels", "index"
             ]            
-        elif "_embed" in model_name :  # post_text_embed
+        elif "_embed" in model_name :  # context_embed
             columns = [
                 "text_input_ids", "text_attention_mask",
                 "ctx_input_ids", "ctx_attention_mask",

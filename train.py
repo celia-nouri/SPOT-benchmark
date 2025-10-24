@@ -36,25 +36,6 @@ class FocalLoss(nn.Module):
         loss = self.alpha * ((1 - pt) ** self.gamma) * ce_loss
         return loss.mean()
 
-class FocalLoss2(nn.Module):
-    def __init__(self, alpha=1, gamma=2, logits=True, reduction='mean'):
-        super(FocalLoss2, self).__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-        self.logits = logits
-        self.reduction = reduction
-
-    def forward(self, inputs, targets):
-        if self.logits:
-            BCE_loss = F.binary_cross_entropy_with_logits(inputs, targets.float(), reduction='none')
-        else:
-            BCE_loss = F.binary_cross_entropy(inputs, targets.float(), reduction='none')
-        pt = torch.exp(-BCE_loss)
-        F_loss = self.alpha * (1 - pt) ** self.gamma * BCE_loss
-
-        return F_loss.mean() if self.reduction == 'mean' else F_loss.sum()
-
-
 def setup(rank, world_size):
     # Set required environment variables for env://
     os.environ["MASTER_ADDR"] = "localhost"
@@ -97,7 +78,6 @@ def run_experiments(rank, world_size, args):
     assert size in ["small", "medium", "large"], "Invalid size setting: {}".format(size)
     print(f"Args: {model_name} using pretrained model {pretrained_model} with seed {seed} on {size} Point d'arrêt dataset with validation={validation}, for {n_epochs} epochs, a learning rate of {learning_rate} and weight decay of {weight_decay}, batch sie if {args.batch_size}, loss minority class weight is {loss_mino_class_weight}...")
     print(f"Distributed settings: Rank is {rank}, world size is {world_size}")
-
 
     print(f"ARGUMENTS: {args}")
 
@@ -149,12 +129,6 @@ def run_experiments(rank, world_size, args):
     else:
         criterion = get_criterion(device=device, balanced=False, class_weights=class_weights)
 
-    #lr_scheduler = get_scheduler(
-    #    name="linear",
-    #    optimizer=optimizer,
-    #    num_warmup_steps=100,
-    #    num_training_steps=total_steps
-    #)
 
     optimizer = AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
@@ -182,7 +156,6 @@ def parse_args(parser):
     parser.add_argument("--hidden-dropout-prob", type=float, metavar="D", default=0.3, help="dropout probability after hidden layer")
     parser.add_argument("--loss", type=str, default="crossentropy", help='loss can be: focal, crossentropy ...')
 
-    
     # Hyper params
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--lr", type=float, default=2e-5)
@@ -192,15 +165,6 @@ def parse_args(parser):
 
     parser.add_argument("--seed", type=int, default=42)
     
-    '''
-    parser.add_argument('--undirected', type=bool, default=False, help='define the graph model as an undirected graph')
-    parser.add_argument('--temp-edges', type=bool, default=False, help='add temporal edges to the graph')
-    parser.add_argument('--num-layers', type=int, default=1, help='the number of GAT layers in graph models')
-    parser.add_argument('--trim', type=str, default="reactions", help='graph construction trimming streatgy, should be either affordance, recent, or left empty for no trimming.')
-    parser.add_argument('--new-trim', type=bool, default=False, help='rather or not to use the new trimming strategy (edge from post to target node only, instead of edges from post to all other nodes)')
-    # Arguments related to dropout
-    parser.add_argument("--dropout", type=float, metavar="D", default=0.4, help="dropout probability")
-    '''
 
     return parser.parse_args()
 

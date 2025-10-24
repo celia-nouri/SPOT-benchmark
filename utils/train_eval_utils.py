@@ -1,24 +1,21 @@
-import torch.distributed as dist
-import torch
-import pandas as pd 
+from collections import Counter
+from datetime import datetime
+
+import json
+from models.model import all_model_names
+import numpy as np
 import os
+import pandas as pd 
+from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_score, recall_score
+from tqdm import tqdm 
+import torch
+from torch.cuda.amp import autocast, GradScaler
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-from collections import Counter
 from transformers import AutoTokenizer, LongformerTokenizer
-from models.model import all_model_names
-import wandb
-from tqdm import tqdm 
-from datetime import datetime
-from torch.cuda.amp import autocast, GradScaler
-from utils.construct_graph import get_graph, get_hetero_graph
-import json
-from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_score, recall_score
 from types import SimpleNamespace
-import numpy as np
-
-
-tokenizerRobertaHS = AutoTokenizer.from_pretrained("camembert-base")
+import wandb
 
 
 def get_criterion(device, balanced=False, class_weights=[]):
@@ -30,70 +27,6 @@ def get_criterion(device, balanced=False, class_weights=[]):
     else:
         return nn.CrossEntropyLoss()
 
-def get_context_texts(conv_array, index):
-    my_id = conv_array[index][0]['id']
-    parent_id = conv_array[index][0]['parent_id']
-
-    parent_id, parent_text, post_id, post_text = "", "", "", ""
-    for i, comment in enumerate(conv_array):
-        if parent_id == comment[0]['id']:
-            parent_text = comment[0]['body']
-        if not parent_id or parent_id == "" or parent_id == "NA":
-            post_id = comment[0]['id']
-            post_text = comment[0]['body']
-    if post_id == parent_id:
-        return [parent_text]
-    return [post_text, parent_text]
-
-def get_context_texts_all(conv_array, index, conv_indices_to_keep=[]):
-    my_id = conv_array[index][0]['id']
-    all_texts = []
-    for i, comment in enumerate(conv_array):
-        if my_id != comment[0]['id'] and (len(conv_indices_to_keep) == 0 or i in conv_indices_to_keep):
-            all_texts.append(comment[0]['body'])
-    return all_texts
-
-def get_all_texts(conv_array):
-    all_texts = []
-    for comment in conv_array:
-        all_texts.append(comment[0]['body'])
-    return all_texts
-
-
-def get_post_parent(conv_array, index):
-    my_id = conv_array[index][0]['id']
-    parent_id = conv_array[index][0]['parent_id']
-
-    parent_id, parent_text, post_id, post_text = "", "", "", ""
-    for i, comment in enumerate(conv_array):
-        if parent_id == comment[0]['id']:
-            parent_text = comment[0]['body']
-        if not parent_id or parent_id == "" or parent_id == "NA":
-            post_id = comment[0]['id']
-            post_text = comment[0]['body']
-
-    return [post_text, parent_text]
-
-def get_reactions_texts(conv_array, index):
-  # we keep the target node, and all the nodes belonging from the tree having target_node as its root.
-    target_comment = conv_array[index]
-    target_timestamp = target_comment[0]['created_utc']
-    target_id = target_comment[0]['id']
-
-    parent_ids_to_keep = [target_id]
-    reaction_txts = []
-
-    for _, node in enumerate(conv_array):
-      # we only want comments posted after or at the target node posted time
-      if node[0]['created_utc'] >= target_timestamp:
-        node_id = node[0]['id']
-        parent_id = node[0]['parent_id']
-
-        # we only want comments that root back to the target node, without including the target node
-        if parent_id in parent_ids_to_keep and node_id != target_id:
-          parent_ids_to_keep += [node_id]
-          reaction_txts += [node[0]['body']]
-    return reaction_txts
 
 def to_serializable_list(data):
     if isinstance(data, torch.Tensor):

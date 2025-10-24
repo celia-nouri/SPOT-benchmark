@@ -1,5 +1,5 @@
 # SPOT (Stopping Points in Online Threads)
-# An Annotated French Corpus and Benchmark for Detecting Critical Interventions in Online Conversations
+## An Annotated French Corpus and Benchmark for Detecting Critical Interventions in Online Conversations
 
 This repository contains the data, code, and notebooks used for the **SPOT** corpus and benchmark for detecting stopping points in French online conversations.
 

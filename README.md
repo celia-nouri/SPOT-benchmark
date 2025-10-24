@@ -12,4 +12,4 @@ This repository contains the data, code, and notebooks used for the **SPOT** cor
 - `llm_inf.py` — Run LLM inference (mainly on test set)  
 - `main_evaluate.py` — Evaluate encoder models (mainly on test set)  
 - `train.py` — Train encoder models  
-- `annotation_guidelines.pdf` — Full annotation guidelines  
+- `Annotation_Guidelines.pdf` — Full annotation guidelines  

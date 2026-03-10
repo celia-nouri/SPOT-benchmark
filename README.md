@@ -3,6 +3,8 @@
 
 This repository contains the data, code, and notebooks used for the **SPOT** corpus and benchmark for detecting stopping points in French online conversations.
 
+Here is the [link to the paper](https://arxiv.org/abs/2511.07405) and the [link to the dataset requesto form](https://data.sciencespo.fr/dataset.xhtml?persistentId=doi:10.21410/7E4/GCGBR3).
+
 ## Repository Structure
 
 - `data/` — Dataset and data loader  

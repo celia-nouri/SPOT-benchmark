@@ -20,9 +20,6 @@ from transformers import (
 
 #from llama_cpp import Llama
 
-from utils.construct_graph import get_graph, get_hetero_graph
-
-
 all_model_names = [
     "text_only", # Text classifier over the comment text
     "com_text_concat", # Text classifier over the account_name [SEP] comment text
@@ -309,11 +306,13 @@ def get_model(args):
     assert pretrained_model_name in all_base_pretrained_models, "Invalid model name: {}".format(pretrained_model_name)
     # Instantiate your model
     model = ""
+    # num_classes comes from args; defaults to 2 for backward-compatibility
+    num_classes = getattr(args, "num_classes", 2)
 
     if model_name == "text_only" or "_concat" in model_name:
         custom_config = AutoConfig.from_pretrained(
             pretrained_model_name,
-            num_labels=2,                    
+            num_labels=num_classes,
             hidden_dropout_prob=args.hidden_dropout_prob,         
             attention_probs_dropout_prob=args.attention_probs_dropout_prob 
         )     
@@ -324,14 +323,14 @@ def get_model(args):
     elif "text_embed" in model_name:
         model = PostTextEmb(
             pretrained_model_name=pretrained_model_name,  
-            num_classes=2,
+            num_classes=num_classes,
             hidden_dropout_prob=args.hidden_dropout_prob, 
             attention_probs_dropout_prob=args.attention_probs_dropout_prob
         )
     elif model_name == "context_all_embed":
         model = AllContextEmb(
             pretrained_model_name=pretrained_model_name,  
-            num_classes=2,
+            num_classes=num_classes,
             hidden_dropout_prob=args.hidden_dropout_prob, 
             attention_probs_dropout_prob=args.attention_probs_dropout_prob,
             add_parent=False
@@ -339,7 +338,7 @@ def get_model(args):
     elif model_name == "graph_context_all":
         model = GraphContextModel(
             pretrained_model_name=pretrained_model_name,  
-            num_classes=2,
+            num_classes=num_classes,
             hidden_dropout_prob=args.hidden_dropout_prob, 
             attention_probs_dropout_prob=args.attention_probs_dropout_prob
         )

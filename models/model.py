@@ -81,7 +81,6 @@ class PostTextEmb(nn.Module):
             - ctx_input_ids
             - ctx_attention_mask
         """
-        print(f'inside forward, batch keys; {batch.keys()}')
         text_input_ids = batch["text_input_ids"].to(self.device)
         text_attention_mask = batch["text_attention_mask"].to(self.device)
         ctx_input_ids = batch["ctx_input_ids"].to(self.device)

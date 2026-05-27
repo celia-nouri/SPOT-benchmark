@@ -149,15 +149,21 @@ def evaluate_model(
     output_file: str = "",
     criterion: nn.Module | None = None,
     id2label: dict | None = None,
-) -> dict:
+) -> tuple[dict, dict]:
     """
-    Evaluate the model on a DataLoader and return a metrics dict.
+    Evaluate the model on a DataLoader.
 
     Returns
     -------
-    dict with keys:
+    metrics : dict
         loss, accuracy, macro_f1, weighted_f1,
         macro_precision, macro_recall, per_class_f1
+    predictions : dict
+        Raw per-sample outputs for error analysis:
+            true_label_ids   : list[int]
+            pred_label_ids   : list[int]
+            pred_probs       : list[list[float]]  — full softmax vector
+            indices          : list[int]          — original dataframe indices
     """
     model.eval()
     running_loss = 0.0
@@ -180,6 +186,9 @@ def evaluate_model(
             if "index" in batch:
                 indices_list.extend(batch["index"].cpu().tolist())
 
+    all_logits = torch.cat(logits_list)                        # (N, C)
+    all_probs  = F.softmax(all_logits, dim=1).tolist()         # list[list[float]]
+
     metrics = _compute_metrics(true_labels, pred_labels, id2label)
     metrics["loss"] = running_loss / max(len(true_labels), 1)
 
@@ -187,7 +196,7 @@ def evaluate_model(
         out = {
             "pred_labels": to_serializable_list(pred_labels),
             "true_labels": to_serializable_list(true_labels),
-            "logits": to_serializable_list(torch.cat(logits_list).numpy()),
+            "logits": to_serializable_list(all_logits.numpy()),
         }
         if indices_list:
             out["index"] = indices_list
@@ -195,7 +204,13 @@ def evaluate_model(
             json.dump(out, f)
             f.write("\n")
 
-    return metrics
+    predictions = {
+        "true_label_ids": true_labels,
+        "pred_label_ids": pred_labels,
+        "pred_probs":     all_probs,
+        "indices":        indices_list,
+    }
+    return metrics, predictions
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -391,7 +406,7 @@ def train(
 
         # ── Validation ────────────────────────────────────────────────────────
         if validation and val_loader and rank == 0:
-            val_metrics = evaluate_model(
+            val_metrics, _ = evaluate_model(
                 model, val_loader, model_name, device,
                 output_file=f"{model_name}_{size}_epoch{epoch+1}_val.json",
                 criterion=criterion,
@@ -440,7 +455,7 @@ def train(
     # ── Final test evaluation ──────────────────────────────────────────────────
     if rank == 0:
         print("\nRunning final test evaluation ...")
-        test_metrics = evaluate_model(
+        test_metrics, _ = evaluate_model(
             best_model, test_loader, model_name, device,
             output_file=f"{model_name}_{size}_test.json",
             criterion=criterion,

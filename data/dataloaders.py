@@ -34,8 +34,16 @@ def get_dataloads(
 ):
     
     print(f"Loading dataset from {data_path}, size is {size}, validation is {validation}, test size is {test_size}...")
-    
-    df = pd.read_csv(data_path, low_memory=False)
+
+    if data_path.endswith(".jsonl"):
+        df = pd.read_json(data_path, lines=True)
+    else:
+        df = pd.read_csv(data_path, low_memory=False)
+        #{"moderated_id": "no6beza", "type": "comment", "parent_id": "t3_1osgcgh", "text": "Selon toi pourquoi les OQTFs ne sont pas appliqués ?\nLe système semble être capables d'identifier les cas qui ne doivent pas rester sur le territoire mais dans les faits, les personnes sont toujours dans la nature. Pourquoi? Que faudrait il changer pour que les peines soient exécutées?", 
+        # "title": "", "edited_title": "", "removal_reason": "removed", "author": "Suitable-Credit3526", "created_utc": 1762809910, 
+        # "permalink": "/r/AMA_FR/comments/1osgcgh/jai_travaillé_à_faire_des_oqtf_ama/no6beza/", "month": "2025-11", "moderated": true, 
+        # "post_title": "", "post_description": ""}
+
     
     if "text" not in df.columns:
         raise ValueError("CSV must contain 'text' columns.")
@@ -47,11 +55,49 @@ def get_dataloads(
         if "stop" not in df.columns:
             raise ValueError("CSV must contain 'stop' columns.")
         df['labels'] = df['stop'].apply(lambda x: 0 if x == 'no_stop' else 1)
-    
+
+    if "_reddit" in model_name:
+        if "post_title" not in df.columns:
+            raise ValueError("CSV must contain 'post_title' column for this model_name.")
+        df["post_title"] = df["post_title"].fillna("").astype(str).replace("[removed]", "")
+        if "post_description" not in df.columns:
+            raise ValueError("CSV must contain 'post_description' column for this model_name.")  
+        df["post_description"] = df["post_description"].fillna("").astype(str).replace("[removed]", "")
+        if "subreddit" not in df.columns:
+            if "account_name" in df.columns:
+                df["subreddit"] = df["account_name"]
+            else: 
+                raise ValueError("CSV must contain 'subreddit' or 'account_name' column for this model_name.")
+        df["subreddit"] = df["subreddit"].fillna("").astype(str)
+
+
     if "_all" in model_name:
+        # REMOVE HERE
+        title = df["post_title"].fillna("").astype(str).replace("[removed]", "")
+        description = df["post_description"].fillna("").astype(str).replace("[removed]", "")
+
+        df["account_name"] = df["subreddit"]
+        df["parent_domain"] = ""
+        df["parent_text"] = ""
+        df["post_title"] = title
+        df["post_description"] = ""
+        df["post_message"] = description
+
+        #{"moderated_id": "nnxjvhi", "type": "comment", "parent_id": "t3_1osgcgh", 
+        #"text": "Bonjour, pourrais tu préciser s'il te plaît, le fonctionnement des OQTF aujourdui suite à la réforme de la circulaire Retailleau. À savoir, durée de validité et exécution, recours et procédure, retour au pays obligatoire, et surtout suite à ton expérience, pourquoi la plupart des OQTF ne sont elles pas exécutées, et sont elles décidées parce que les préfectures sont débordées à défaut de pourvoir examiner sereinement d'autres possibilités de régularisation ? Merci en espérant avoir été clair.", 
+        #"title": "", "edited_title": "", "removal_reason": "removed", "author": "Aybabtu67", "created_utc": 1762697178, 
+        #"permalink": "/r/AMA_FR/comments/1osgcgh/jai_travaillé_à_faire_des_oqtf_ama/nnxjvhi/", 
+        #"month": "2025-11", "moderated": true, "post_title": "", "post_description": ""}
+
+        ## For french subreddits, modify the schema:
+        #title = df["post_title"].fillna("").astype(str)
+        #description = df["post_description"].fillna("").astype(str)
+        # REMOVE END HERE
+
         if "account_name" not in df.columns:
             raise ValueError("CSV must contain 'account_name' column for this model_name.")
-        df["account_name"] = df["account_name"].fillna("").astype(str)        
+        df["account_name"] = df["account_name"].fillna("").astype(str)    
+
         if "parent_domain" not in df.columns:
             raise ValueError("CSV must contain 'parent_domain' column for this model_name.")
         df["parent_domain"] = df["parent_domain"].fillna("").astype(str)
@@ -67,6 +113,7 @@ def get_dataloads(
         if "parent_text" not in df.columns:
             raise ValueError("CSV must contain 'parent_text' column for this model_name.")
         df["parent_text"] = df["parent_text"].fillna("").astype(str)
+
     if "parent" in model_name: #OK
         if "parent_domain" not in df.columns:
             raise ValueError("CSV must contain 'parent_domain' column for this model_name.")
@@ -169,6 +216,9 @@ def get_dataloads(
             tokens["labels"] = batch["labels"]
             tokens["index"] = batch["index"]
             return tokens    
+
+
+    if "_all" in model_name or "_reddit" in model_name:
         
         def tokenize_all_concat(batch): # for ContextConcat
             sep = tokenizer.sep_token or "[SEP]"
@@ -289,6 +339,49 @@ def get_dataloads(
             print(output.keys())
             return output
 
+            
+        def tokenize_dual_reddit(batch):
+            #cols = ['text', 'subreddit', 'post_title', 'post_description', 'labels', 'index']
+            output = {}
+            sep_token = tokenizer.sep_token or "[SEP]"
+            ctx_text = batch["text"]
+            if 'subreddit' in batch.keys() and 'post_title' in batch.keys() and 'post_description' in batch.keys():
+                concat_texts = []
+                #   ['text', 'subreddit, 'post_title', 'post_description', 'labels', 'index']
+                for title, desc, subreddit in zip(
+                    batch["post_title"],
+                    batch["post_description"],
+                    batch["subreddit"],
+                ):
+                    # Truncate fields
+                    title = truncate_text(title, LIMITS["parent_comment"])
+                    desc = truncate_text(desc, LIMITS["parent_comment"])
+                    subreddit = truncate_text(subreddit, LIMITS["account"])
+
+                    # Build sections dynamically (only if not empty)
+                    sections = []
+                    if subreddit:
+                        sections.append(f"[SUBREDDIT] {subreddit}")
+                    if title or desc:
+                        art = f"[POST] {title} {desc}".strip()
+                        sections.append(art)
+
+                    # Join all with SEP token
+                    concat = f" {sep_token} ".join(sections)
+                    concat_texts.append(concat.strip())
+                ctx_text = concat_texts # will do the code after for all 
+            
+            text_tok = tokenizer(batch["text"], truncation=True, padding="max_length")
+            ctx_tok = tokenizer(ctx_text, truncation=True, padding="max_length")
+            for k in text_tok:
+                output[f"text_{k}"] = text_tok[k]
+            for k in ctx_tok:
+                output[f"ctx_{k}"] = ctx_tok[k]
+            output["labels"] = batch["labels"]
+            output["index"] = batch["index"]
+            print(output.keys())
+            return output
+
         def tokenize_four(batch):
             output = {}
 
@@ -322,7 +415,7 @@ def get_dataloads(
 
             return output
 
-
+        print(f"Model name is {model_name}")
         if model_name == "text_only":
             cols = ['text', 'labels', 'index']
             tok_func = tokenize_text_only
@@ -345,6 +438,9 @@ def get_dataloads(
             cols = ['text', 'parent_text', 'labels', 'index']
             tok_func = tokenize_domain_concat
         # all context models
+        elif model_name == "context_reddit_text_embed":
+            cols = ['text', 'subreddit', 'post_title', 'post_description', 'labels', 'index']
+            tok_func = tokenize_dual_reddit
         elif model_name == "context_all_text_embed":
             cols = ['text', 'parent_domain', 'account_name', 'post_title', 'post_description', 'post_message', 'parent_text', 'labels', 'index']
             tok_func = tokenize_dual

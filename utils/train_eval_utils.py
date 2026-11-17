@@ -170,7 +170,7 @@ def inference_model(model, loader, model_name, device, threshold=0.5, tokenizer=
             batch = {k: v.to(device) for k, v in batch.items()}
             outputs = run_model_pred(model, batch, model_name, tokenizer=tokenizer)
             logits = outputs.logits
-            print(f"logits {logits}")
+            #print(f"logits {logits}")
 
             probs = F.softmax(logits, dim=1)
             scores = probs[:, 1]  # Probability of class 1
@@ -184,7 +184,7 @@ def inference_model(model, loader, model_name, device, threshold=0.5, tokenizer=
             else:
                 # Fallback: just keep count if no indices are provided
                 pred_indices.extend(list(range(len(pred_labels) - len(preds), len(pred_labels))))
-    print(f"inference returns: \nPREDS {pred_labels} \nSCORES {pred_scores} \nINDICES {pred_indices}")
+    #print(f"inference returns: \nPREDS {pred_labels} \nSCORES {pred_scores} \nINDICES {pred_indices}")
     return pred_labels, pred_scores, pred_indices
 
 def run_model_pred(model, batch, model_name, tokenizer=None):
@@ -198,7 +198,7 @@ def run_model_pred(model, batch, model_name, tokenizer=None):
         return outputs  # returns a ModelOutput with .logits
 
     elif "_embed" in model_name or model_name == "graph_context_all":
-        print('in run model pred, at the right place')
+        #print('in run model pred, at the right place')
         # BERTContextEmb returns raw logits → wrap to mimic HuggingFace output
         logits = model(batch)
         return SimpleNamespace(logits=logits)  # makes it compatible with outputs.logits

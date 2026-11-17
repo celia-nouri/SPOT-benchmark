@@ -57,7 +57,7 @@ def run_eval(args):
 
     # Init wandb only on rank 0
 
-    wandb.init(project="pointdarret-classification", config=vars(args))
+    #wandb.init(project="pointdarret-classification", config=vars(args))
 
     # Set seeds
     set_all_seeds(seed)
@@ -119,7 +119,10 @@ def run_eval(args):
         pred_labels, pred_scores, pred_indices = inference_model(model, test_loader, model_name, device, threshold=args.threshold, tokenizer=tokenizer)
 
         # Read the original dataframe to preserve other columns
-        df = pd.read_csv(args.data_path)
+        if args.data_path.endswith('.jsonl'):
+            df = pd.read_json(args.data_path, lines=True)
+        else:
+            df = pd.read_csv(args.data_path)
         df = df.reset_index(drop=True)
         # Ensure 'index' column exists and aligns with DataLoader
         df["index"] = range(len(df))

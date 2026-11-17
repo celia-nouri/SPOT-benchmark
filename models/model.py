@@ -30,6 +30,8 @@ all_model_names = [
     "context_all_text_concat",  # Text classifier over the comment text [PARENT] parent_text [ACCOUNT] account_name [POST] post_message [DOMAIN] domain [ARTICLE] article_title article_description 
 
     "context_all_text_embed",  # Generates one embedding for the comment text, and one embdding for [PARENT] parent_text [ACCOUNT] account_name [POST] post_message [DOMAIN] domain [ARTICLE] article_title article_description, combine them with a FC layer, then classify
+    "context_reddit_text_embed",  # Generates one embedding for the comment text, and one embdding for [PARENT] parent_text [SUBREDDIT] account_name [POST] post_message post_description combine them with a FC layer, then classify
+
     "context_all_embed", # Generates one embedding for the comment text, and one embdding per contextual element (parent, account, post, article), combine them with a FC layer, then classify
     "graph_context_all",
     ]

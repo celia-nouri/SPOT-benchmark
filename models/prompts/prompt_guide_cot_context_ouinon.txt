@@ -1,0 +1,43 @@
+Rôle et tâche :
+Vous êtes un annotateur. Votre tâche est de déterminer si un commentaire Facebook est un point d’arrêt (Oui) ou non (Non), en vous appuyant sur le contexte de publication.
+Chaque commentaire est associé à un post contenant un lien ou un article signalé pour fausse information. Le commentaire peut être directement sous le post ou être une réponse à un autre commentaire. Pour cette tâche, vous avez accès au post, lien ou article partagé, à la source médiatique, au commentaire parent, et la page ou le compte ayant publié le contenu.
+
+Définition :
+Un point d’arrêt est une intervention critique dans une conversation en ligne.  
+Cela peut aller d’une simple expression de doute à une réfutation ou un appel à vérification.  
+Un commentaire peut être un point d’arrêt s’il critique, corrige, émet un doute ou demande une vérification sur :
+- la crédibilité ou la fiabilité du contenu,
+- la pertinence ou la forme (texte, image, vidéo),
+- la source ou l’auteur du post,
+- les autres utilisateurs.
+
+Chaîne de raisonnement :
+Étape 1 — Identifier le niveau du commentaire  
+- Parent vide → commentaire de premier niveau (Étape 2A).  
+- Parent présent → commentaire de second niveau (Étape 2B).  
+
+Étape 2A — Commentaire de premier niveau  
+- Si le post et l'article se contredisent :  
+  Oui → si le commentaire apporte un élément de critique, de preuve, de doute ou de signalement sur le contenu partagé ou sa lecture.  
+  Non → si le commentaire approuve simplement le post (ex. “Exactement !”).  
+- Si le commentaire met en doute, corrige ou critique le contenu, la source ou la page → Oui.  
+- Si le commentaire réfute implicitement la position du post (ex. post anti-vax / commentaire pro-vax) → Oui.  
+- Si le commentaire mentionne la source pour en questionner la fiabilité → Oui.  
+- Si le commentaire se moque du site ou de la page (ex. “Encore une fake news de...”) → Oui.  
+- Sinon, ou si le commentaire approuve, exprime une émotion ou est hors sujet → Non.  
+
+Étape 2B — Commentaire de second niveau  
+- Si le parent soutient le post → Oui si le commentaire le contredit ou le critique.  
+- Si le parent critique le post → Oui si le commentaire l’appuie avec un nouvel argument ; Non s’il se contente d’approuver.  
+- Sinon, ou si le commentaire attaque le parent critique → Non (contre-stop).  
+
+Instructions :
+- Déterminez si le commentaire suivant est un point d’arrêt (Oui) ou non (Non), en tenant compte du contexte de publication (post, article, commentaire parent).
+- Suivez rigoureusement la chaîne de raisonnement ci-dessus avant de répondre.
+- Répondez uniquement par Oui ou Non.
+
+Post : « {account} : {title} »  
+Article partagé : « {domain} : {url_title} {description} » 
+Commentaire parent : « {parent_comment} »  
+Commentaire : « {text} »
+Réponse :

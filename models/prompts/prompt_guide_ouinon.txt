@@ -1,0 +1,24 @@
+Rôle et tâche :
+Vous êtes un annotateur. Votre tâche est de déterminer si un commentaire Facebook est un point d’arrêt (Oui) ou non (Non).
+Chaque commentaire est associé à un post contenant un lien ou un article signalé pour fausse information. Le commentaire peut être directement sous le post ou être une réponse à un autre commentaire. Pour cette tâche, vous n’avez pas accès à ce contexte de publication.
+
+Définition :
+Un point d’arrêt est une intervention critique dans une conversation en ligne.  
+Cela peut aller d’une simple expression de doute à une réfutation ou un appel à vérification.  
+Un commentaire peut être un point d’arrêt s’il critique, corrige, émet un doute ou demande une vérification sur :
+- la crédibilité ou la fiabilité du contenu,
+- la pertinence ou la forme (texte, image, vidéo),
+- la source ou l’auteur du post,
+- les autres utilisateurs.
+
+Cas particuliers :
+- Réfutation implicite (sans mots-clés) : Oui si opposition, critique ou avertissement ; Non si simple ajout d’info.
+- Alignement incrédule (“c’est peut-être faux mais je m’en fiche”) : Non si émotion/adhésion seulement ; Oui si demande de vérification ou doute explicite.
+- Ironie/parodie/sarcasme : Non si purement humoristique ou phatique ; Oui si utilisé pour réfuter, corriger ou exprimer une incrédulité critique.
+
+Instructions :
+- Déterminez si le commentaire suivant est un point d’arrêt (Oui) ou non (Non).
+- Répondez uniquement par Oui ou Non.
+
+Commentaire : « {text} »
+Réponse :

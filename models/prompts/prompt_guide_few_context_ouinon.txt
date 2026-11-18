@@ -1,0 +1,52 @@
+Rôle et tâche :
+Vous êtes un annotateur. Votre tâche est de déterminer si un commentaire Facebook est un point d’arrêt (Oui) ou non (Non), en vous appuyant sur le contexte de publication.
+Chaque commentaire est associé à un post contenant un lien ou un article signalé pour fausse information. Le commentaire peut être directement sous le post ou être une réponse à un autre commentaire. Pour cette tâche, vous avez accès au post, lien ou article partagé, à la source médiatique, au commentaire parent, et la page ou le compte ayant publié le contenu.
+
+Définition :
+Un point d’arrêt est une intervention critique dans une conversation en ligne.  
+Cela peut aller d’une simple expression de doute à une réfutation ou un appel à vérification.  
+Un commentaire peut être un point d’arrêt s’il critique, corrige, émet un doute ou demande une vérification sur :
+- la crédibilité ou la fiabilité du contenu,
+- la pertinence ou la forme (texte, image, vidéo),
+- la source ou l’auteur du post,
+- les autres utilisateurs.
+
+Exemples :
+« Ah oui, bien sûr on vous croit ... 🙄 » → Oui (ironie exprimant le doute)
+« Encore une rumeur Twitter » → Oui (réfutation implicite)
+« Si seulement c’était vrai… » → Non (souhait, pas critique)
+« C’est dégueulasse » → Non (outrage ou émotion sans critique)
+
+Post : « Info Vaccins France : une nouvelle victime des industries pharmaceutiques... RIP »
+Article partagé : « lesmoutonsrebelles.com : Encore un bébé de deux mois qui décède 48H après avoir reçu 8 vaccins »
+Commentaire parent : « Mais sérieux?! Ils comprennent rien de rien! Il en faudra combien de victimes sérieux! »
+Commentaire : « Avant les vaccins c était des milliers de victimes et d'enfants qui mouraient.. faudra pas venir pleurer après! »
+Réponse : Oui
+
+Post : « LOSC : Le monde du foot est en deuil ! »
+Article partagé : « losc.fr : Un grand joueur s’éteint, le monde du football en pleure »
+Commentaire parent : «»
+Commentaire : « Toutes ces pages de pub pour annoncer (en retard) que Stéphane Paille est décédé ! Le 27 juin.»
+Réponse : Oui
+
+Post : « 1 Million de J'aime Contre Emmanuel Macron : 😠😠😠😠 »
+Article partagé : « valeursactuelles.com : Parlement européen : Bayer-Monsanto finance bien le parti de Macron »
+Commentaire parent : « @USER et oui … »
+Commentaire : « On comprend mieux pourquoi nous mangeons encore du cancer »
+Réponse : Non
+
+Post : « Force gilet jaune 31 : »
+Article partagé : «planetes360.fr : « Je demande des efforts aux Français »... 14 chauffeurs, 60 cuisiniers et hôteliers : les chiffres sur le cabinet d’Édouard Philippe - PLANETES360 »
+Commentaire parent : «»
+Commentaire : « Honteux... D’émission !!! »
+Réponse : Non
+
+Instructions :
+- Déterminez si le commentaire suivant est un point d’arrêt (Oui) ou non (Non), en tenant compte du contexte de publication (post, article, commentaire parent).
+- Répondez uniquement par Oui ou Non.
+
+Post : « {account} : {title} »  
+Article partagé : « {domain} : {url_title} {description} » 
+Commentaire parent : « {parent_comment} »  
+Commentaire : « {text} »
+Réponse :
